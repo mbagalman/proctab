@@ -1,12 +1,13 @@
 """`freq()` — frequency tables and crosstabs. See FREQ_API.md for design.
 
-Currently exposes:
-- `FreqSpec` (F1): parsed-and-validated arg representation.
-- `_parse_freq_args()` (F2): user args → FreqSpec.
-- `CountResult` + `aggregate_counts()` (F4a): raw count matrix from a
-  narwhals-wrapped DataFrame.
+Public entry point: `freq(data, *keys, **kwargs)`.
 
-The public `freq()` function arrives in F6.
+Internal pipeline (also importable for testing):
+- `FreqSpec` (F1) + `_parse_freq_args()` (F2): parsed/validated args
+- `_engine.wrap()` (F3): narwhals adapter for pandas/polars input
+- `CountResult` + `aggregate_counts()` (F4a): raw counts
+- `PercentResult` + `derive_percentages()` (F4b): final body + missing
+- `AxisBuildResult` + `build_axes()` (F5): Axis structures
 """
 
 from __future__ import annotations
@@ -19,12 +20,14 @@ from typing import Any
 import narwhals.stable.v1 as nw
 import numpy as np
 
+from legible._engine import wrap
 from legible.model import (
     Axis,
     Category,
     Dimension,
     MissingReason,
     Node,
+    Table,
     TotalMarker,
     ValueKind,
 )
@@ -746,3 +749,87 @@ def _expand_per_col_leaf(
     value_kinds = percents.stat_value_kinds * n_col_groups
     formats: tuple[str | None, ...] = percents.stat_formats * n_col_groups
     return value_kinds, formats
+
+
+# === F6: public API ========================================================
+
+
+def freq(
+    data: Any,
+    *keys: str | Sequence[str],
+    totals: bool = True,
+    observed: bool = True,
+    dropna: bool = False,
+    levels: Mapping[str, Sequence[Any]] | None = None,
+    label: Mapping[str, str] | None = None,
+    weight: str | None = None,
+    test: str | None = None,
+) -> Table:
+    """Frequency table or two-way crosstab from a pandas or polars DataFrame.
+
+    See FREQ_API.md for the full design. Composes the F1–F5 internal
+    pipeline; no business logic of its own.
+
+    Args:
+        data: A pandas or polars (eager) DataFrame.
+        *keys: One or two grouping column names. Accepts positional
+            strings or a single list/tuple. Mixing forms raises TypeError.
+        totals: If True (default), include marginal Total row (and Total
+            column for two-way crosstabs).
+        observed: If True (default), only categories appearing in the data
+            become leaves. If False, the full domain must be supplied via
+            `levels=` for each grouping key.
+        dropna: If True, drop rows with null values in any grouping
+            column. If False (default), nulls become a synthetic "Missing"
+            category appended last.
+        levels: Optional per-key override of category order or domain
+            (`{"region": ["W", "E", ...]}`). Required for `observed=False`.
+        label: Optional display-name overrides for dimension names
+            (`{"region": "Sales Region"}`). Used by HTML / Excel renderers.
+        weight: RESERVED for weighted frequencies in v0.2; raises
+            NotImplementedError if non-None.
+        test: RESERVED for statistical tests (chi-square, Fisher's,
+            Cramér's V) in v0.2; raises NotImplementedError if non-None.
+
+    Returns:
+        A `Table` with the row Axis built from the first key, the column
+        Axis carrying the `_stat` dimension (and the second key for
+        two-way), and a body matrix of counts and percentages.
+
+    Raises:
+        ValueError: invalid argument combinations (no keys, 3+ keys,
+            duplicate keys, `observed=False` without `levels=`, etc.).
+        TypeError: mixed positional/list key forms or non-DataFrame input.
+        KeyError: a named grouping column is not present in `data`.
+        NotImplementedError: `weight=` or `test=` supplied (v0.2 features).
+
+    Example:
+        >>> import pandas as pd
+        >>> import legible as lg
+        >>> df = pd.DataFrame({"region": ["W", "W", "E", "E", "S"]})
+        >>> table = lg.freq(df, "region")
+        >>> print(table.to_text())  # doctest: +SKIP
+    """
+    spec = _parse_freq_args(
+        *keys,
+        totals=totals,
+        observed=observed,
+        dropna=dropna,
+        levels=levels,
+        label=label,
+        weight=weight,
+        test=test,
+    )
+    nw_df = wrap(data, required_columns=spec.keys)
+    counts = aggregate_counts(nw_df, spec)
+    percents = derive_percentages(counts, spec)
+    axes = build_axes(percents, spec)
+
+    return Table(
+        row_axis=axes.row_axis,
+        col_axis=axes.col_axis,
+        body=percents.body,
+        missing=percents.missing,
+        value_kinds=axes.value_kinds,
+        formats=axes.formats,
+    )
