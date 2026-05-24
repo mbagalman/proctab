@@ -19,7 +19,7 @@ from typing import Any
 import narwhals.stable.v1 as nw
 import numpy as np
 
-from legible.model import Category
+from legible.model import Category, MissingReason, ValueKind
 
 
 @dataclass(frozen=True)
@@ -307,3 +307,217 @@ def _is_null(value: Any) -> bool:
 def _normalize(value: Any) -> Any:
     """Normalize null forms (NaN, None) to None for consistent dict lookup."""
     return None if _is_null(value) else value
+
+
+# === F4b: percentage derivation + MissingReason ============================
+
+
+_ONE_WAY_STATS = (
+    Category("N"),
+    Category("Pct"),
+    Category("CumN"),
+    Category("CumPct", label="Cum%"),
+)
+_ONE_WAY_VALUE_KINDS: tuple[ValueKind, ...] = (
+    "count", "percent", "count", "percent",
+)
+_ONE_WAY_FORMATS = ("{:.0f}", "{:.1f}%", "{:.0f}", "{:.1f}%")
+
+_TWO_WAY_STATS = (
+    Category("N"),
+    Category("RowPct", label="Row%"),
+    Category("ColPct", label="Col%"),
+    Category("TotPct", label="Tot%"),
+)
+_TWO_WAY_VALUE_KINDS: tuple[ValueKind, ...] = (
+    "count", "percent", "percent", "percent",
+)
+_TWO_WAY_FORMATS = ("{:.0f}", "{:.1f}%", "{:.1f}%", "{:.1f}%")
+
+
+@dataclass(frozen=True)
+class PercentResult:
+    """Output of `derive_percentages()` — the final body matrix and
+    `MissingReason` codes for the freq() Table, plus the metadata F5/F6
+    need to build the Axis structure and populate Table attributes.
+
+    `body.shape` is `(R + has_row_total, n_stats)` for one-way or
+    `(R + has_row_total, (C + has_col_total) * n_stats)` for two-way,
+    where Total rows/cols sit AFTER all data rows/cols.
+
+    `MissingReason.NOT_APPLICABLE` is set on percentage cells whose
+    denominator is zero (divide-by-zero protection). N cells are always
+    PRESENT — a count of zero is meaningful, not missing.
+    """
+
+    row_categories: tuple[Category, ...]
+    col_categories: tuple[Category, ...] | None
+    stat_categories: tuple[Category, ...]
+    stat_value_kinds: tuple[ValueKind, ...]
+    stat_formats: tuple[str, ...]
+    has_row_total: bool
+    has_col_total: bool
+    body: np.ndarray
+    missing: np.ndarray
+
+
+def derive_percentages(counts: CountResult, spec: FreqSpec) -> PercentResult:
+    """Compute the final body matrix and MissingReason codes from raw counts.
+
+    Honors `spec.totals` for marginal rows/columns. The Total row/col is
+    suppressed when there's no data to total over (R == 0 or, for two-way,
+    R == 0 or C == 0).
+    """
+    if counts.col_categories is None:
+        return _derive_one_way(counts, spec)
+    return _derive_two_way(counts, spec)
+
+
+def _derive_one_way(counts: CountResult, spec: FreqSpec) -> PercentResult:
+    raw = counts.counts
+    n_categories = len(raw)
+    n_stats = len(_ONE_WAY_STATS)
+    grand_total = float(raw.sum())
+
+    has_row_total = spec.totals and n_categories > 0
+    n_rows = n_categories + (1 if has_row_total else 0)
+
+    body = np.zeros((n_rows, n_stats), dtype=np.float64)
+    missing = np.zeros((n_rows, n_stats), dtype=np.uint8)
+
+    running = 0.0
+    for i in range(n_categories):
+        n = float(raw[i])
+        running += n
+        body[i, 0] = n                 # N
+        body[i, 2] = running           # CumN
+        _set_percent(body, missing, i, 1, n,       grand_total)
+        _set_percent(body, missing, i, 3, running, grand_total)
+
+    if has_row_total:
+        t = n_categories
+        body[t, 0] = grand_total       # N
+        body[t, 2] = grand_total       # CumN (= grand)
+        _set_percent(body, missing, t, 1, grand_total, grand_total)
+        _set_percent(body, missing, t, 3, grand_total, grand_total)
+
+    return PercentResult(
+        row_categories=counts.row_categories,
+        col_categories=None,
+        stat_categories=_ONE_WAY_STATS,
+        stat_value_kinds=_ONE_WAY_VALUE_KINDS,
+        stat_formats=_ONE_WAY_FORMATS,
+        has_row_total=has_row_total,
+        has_col_total=False,
+        body=body,
+        missing=missing,
+    )
+
+
+def _derive_two_way(counts: CountResult, spec: FreqSpec) -> PercentResult:
+    raw = counts.counts
+    n_rows_data, n_cols_data = raw.shape
+    n_stats = len(_TWO_WAY_STATS)
+
+    nonempty = n_rows_data > 0 and n_cols_data > 0
+    has_row_total = spec.totals and nonempty
+    has_col_total = spec.totals and nonempty
+
+    n_row_groups = n_rows_data + (1 if has_row_total else 0)
+    n_col_groups = n_cols_data + (1 if has_col_total else 0)
+
+    body = np.zeros((n_row_groups, n_col_groups * n_stats), dtype=np.float64)
+    missing = np.zeros_like(body, dtype=np.uint8)
+
+    if not nonempty:
+        return PercentResult(
+            row_categories=counts.row_categories,
+            col_categories=counts.col_categories,
+            stat_categories=_TWO_WAY_STATS,
+            stat_value_kinds=_TWO_WAY_VALUE_KINDS,
+            stat_formats=_TWO_WAY_FORMATS,
+            has_row_total=False,
+            has_col_total=False,
+            body=body,
+            missing=missing,
+        )
+
+    row_sums = raw.sum(axis=1)
+    col_sums = raw.sum(axis=0)
+    grand_total = float(raw.sum())
+
+    # Data cells
+    for i in range(n_rows_data):
+        rs = float(row_sums[i])
+        for j in range(n_cols_data):
+            n = float(raw[i, j])
+            cs = float(col_sums[j])
+            base = j * n_stats
+            body[i, base + 0] = n
+            _set_percent(body, missing, i, base + 1, n, rs)            # Row%
+            _set_percent(body, missing, i, base + 2, n, cs)            # Col%
+            _set_percent(body, missing, i, base + 3, n, grand_total)   # Tot%
+
+    # Total column (across cols of each data row)
+    if has_col_total:
+        tc_base = n_cols_data * n_stats
+        for i in range(n_rows_data):
+            rs = float(row_sums[i])
+            body[i, tc_base + 0] = rs                                # N
+            body[i, tc_base + 1] = 100.0 if rs > 0 else 0.0          # Row% (by def)
+            if rs == 0:
+                missing[i, tc_base + 1] = MissingReason.NOT_APPLICABLE
+            _set_percent(body, missing, i, tc_base + 2, rs, grand_total)  # Col%
+            _set_percent(body, missing, i, tc_base + 3, rs, grand_total)  # Tot%
+
+    # Total row (across rows of each data col)
+    if has_row_total:
+        tr = n_rows_data
+        for j in range(n_cols_data):
+            cs = float(col_sums[j])
+            base = j * n_stats
+            body[tr, base + 0] = cs                                   # N
+            _set_percent(body, missing, tr, base + 1, cs, grand_total)   # Row%
+            body[tr, base + 2] = 100.0 if cs > 0 else 0.0             # Col% (by def)
+            if cs == 0:
+                missing[tr, base + 2] = MissingReason.NOT_APPLICABLE
+            _set_percent(body, missing, tr, base + 3, cs, grand_total)   # Tot%
+
+        # Grand Total cell (Total row × Total col)
+        if has_col_total:
+            tc_base = n_cols_data * n_stats
+            body[tr, tc_base + 0] = grand_total
+            for s in range(1, n_stats):
+                if grand_total > 0:
+                    body[tr, tc_base + s] = 100.0
+                else:
+                    missing[tr, tc_base + s] = MissingReason.NOT_APPLICABLE
+
+    return PercentResult(
+        row_categories=counts.row_categories,
+        col_categories=counts.col_categories,
+        stat_categories=_TWO_WAY_STATS,
+        stat_value_kinds=_TWO_WAY_VALUE_KINDS,
+        stat_formats=_TWO_WAY_FORMATS,
+        has_row_total=has_row_total,
+        has_col_total=has_col_total,
+        body=body,
+        missing=missing,
+    )
+
+
+def _set_percent(
+    body: np.ndarray,
+    missing: np.ndarray,
+    i: int,
+    j: int,
+    numerator: float,
+    denominator: float,
+) -> None:
+    """Write `numerator / denominator * 100` to body[i, j], or flag the
+    cell as NOT_APPLICABLE if the denominator is zero. Centralizes the
+    divide-by-zero contract for every percent-stat cell."""
+    if denominator > 0:
+        body[i, j] = numerator / denominator * 100.0
+    else:
+        missing[i, j] = MissingReason.NOT_APPLICABLE
