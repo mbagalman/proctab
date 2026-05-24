@@ -5,11 +5,14 @@ description = "Executive-ready summary tables and crosstabs from business data."
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
+    "narwhals>=1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7",
+    "pandas>=2.0",
+    "polars>=1.0",
 ]
 
 [build-system]

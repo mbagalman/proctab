@@ -9,7 +9,7 @@ The bare data model and a renderer that proves it works. No aggregation yet.
 - [x] Data containers: `Table`, `Axis`, `Dimension`, `Node`, `Category`, `Marker`, `MissingReason`, `ValueKind`
 - [x] Hand-built tables for the four worked examples in [VISION.md](VISION.md) (`src/legible/examples.py`)
 - [x] Plain-text renderer (`src/legible/render/text.py`)
-- [x] Initial test suite (90 passing, pandas/polars-free)
+- [x] Initial test suite (111 passing — pandas/polars exercised from F3 onward)
 - [x] Hardened `Axis.validate()`: full-tree walk; span correctness; `len(path) == depth` consistency; malformed-branch-path detection
 - [ ] CI: GitHub Actions running lint + test on Python 3.10–3.14
 - [ ] Choose final project name (currently using `legible` as a working name)
@@ -23,7 +23,7 @@ First release someone might actually try. Each feature gets a design memo before
 - [x] Lock design memo: [FREQ_API.md](FREQ_API.md)
 - [x] **F1.** `FreqSpec` dataclass — internal parsed-args representation
 - [x] **F2.** `_parse_freq_args()` — function-args → `FreqSpec` with edge-case validation (key count, mixed-form rejection, reserved kwargs, missing `levels=` when needed)
-- [ ] **F3.** narwhals integration boilerplate — uniform wrapper around pandas/polars input
+- [x] **F3.** narwhals integration boilerplate — uniform wrapper around pandas/polars input
 - [ ] **F4a.** Aggregation kernel: count matrix construction + marginal totals (raw integer counts per cell, marginal sums)
 - [ ] **F4b.** Aggregation kernel: percentage derivation + `MissingReason` assignment (counts → percent stats; EMPTY for zero-record combinations; divide-by-zero handling)
 - [ ] **F5.** Axis construction — given the spec + observed categories, build row/col `Axis`es per the [positional path invariant](TABLE_MODEL.md#node-the-axis-tree)
