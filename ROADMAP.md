@@ -9,7 +9,7 @@ The bare data model and a renderer that proves it works. No aggregation yet.
 - [x] Data containers: `Table`, `Axis`, `Dimension`, `Node`, `Category`, `Marker`, `MissingReason`, `ValueKind`
 - [x] Hand-built tables for the four worked examples in [VISION.md](VISION.md) (`src/legible/examples.py`)
 - [x] Plain-text renderer (`src/legible/render/text.py`)
-- [x] Initial test suite (294 passing — pandas/polars exercised from F3 onward)
+- [x] Initial test suite (332 passing — pandas/polars exercised from F3 onward)
 - [x] Hardened `Axis.validate()`: full-tree walk; span correctness; `len(path) == depth` consistency; malformed-branch-path detection
 - [ ] CI: GitHub Actions running lint + test on Python 3.10–3.14
 - [ ] Choose final project name (currently using `legible` as a working name)
@@ -29,7 +29,7 @@ First release someone might actually try. Each feature gets a design memo before
 - [x] **F5.** Axis construction — given the spec + observed categories, build row/col `Axis`es per the [positional path invariant](TABLE_MODEL.md#node-the-axis-tree)
 - [x] **F6.** Public `freq()` — wire spec parsing → DataFrame wrapping → aggregation → axis construction → `Table` assembly
 - [x] **F7.** Tests against `examples.py` fixtures — pandas + polars inputs both produce the same `Table` shape; numeric values match within float tolerance
-- [ ] **F8.** Edge-case tests — empty df, all-null column, 3-key error, `dropna=True/False`, `observed=False` with `levels=`, reserved-kwarg errors
+- [x] **F8.** Edge-case tests — empty df, all-null column, 3-key error, `dropna=True/False`, `observed=False` with `levels=`, reserved-kwarg errors
 
 ### `tabulate()` — multi-dimensional summary tables
 
