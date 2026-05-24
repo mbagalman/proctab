@@ -17,7 +17,8 @@
       "Bash(.venv/Scripts/python.exe -c ' *)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_freq_aggregate.py -v)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_freq_percent.py -v)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_freq_axes.py -v)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_freq_axes.py -v)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_freq_integration.py -v)"
     ],
     "additionalDirectories": [
       "c:\\Users\\micha\\.claude\\projects\\c--Users-micha-Documents-GitHub-Legible\\memory"

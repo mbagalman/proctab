@@ -98,7 +98,7 @@ def example_1b_two_way_freq() -> Table:
     regions = [Category("West"), Category("East"), Category("South")]
     products = [Category("Widget A"), Category("Widget B")]
     stats = [
-        Category("N", label="N"),
+        Category("N"),
         Category("RowPct", label="Row%"),
         Category("ColPct", label="Col%"),
         Category("TotPct", label="Tot%"),
