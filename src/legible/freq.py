@@ -19,7 +19,15 @@ from typing import Any
 import narwhals.stable.v1 as nw
 import numpy as np
 
-from legible.model import Category, MissingReason, ValueKind
+from legible.model import (
+    Axis,
+    Category,
+    Dimension,
+    MissingReason,
+    Node,
+    TotalMarker,
+    ValueKind,
+)
 
 
 @dataclass(frozen=True)
@@ -521,3 +529,172 @@ def _set_percent(
         body[i, j] = numerator / denominator * 100.0
     else:
         missing[i, j] = MissingReason.NOT_APPLICABLE
+
+
+# === F5: axis construction =================================================
+
+
+@dataclass(frozen=True)
+class AxisBuildResult:
+    """Row + col Axes assembled from a `PercentResult`, plus per-col-leaf
+    `value_kinds` and `formats` (expanded from per-stat metadata by tiling
+    across column groups for two-way tables).
+
+    F6 takes this plus the `body` / `missing` matrices from `PercentResult`
+    and assembles the final `Table`.
+    """
+
+    row_axis: Axis
+    col_axis: Axis
+    value_kinds: tuple[ValueKind, ...]
+    formats: tuple[str | None, ...]
+
+
+def build_axes(percents: PercentResult, spec: FreqSpec) -> AxisBuildResult:
+    """Build validated row + col Axes from a `PercentResult` and spec.
+
+    Calls `Axis.validate()` on both outputs, so a successful return means
+    the axes satisfy every TABLE_MODEL.md invariant — including the
+    positional-path / role-marker / span / depth checks. F6 can trust the
+    Axis shapes without re-checking.
+    """
+    row_axis = _build_row_axis(percents, spec)
+    if percents.col_categories is None:
+        col_axis = _build_col_axis_one_way(percents)
+    else:
+        col_axis = _build_col_axis_two_way(percents, spec)
+
+    row_axis.validate()
+    col_axis.validate()
+
+    value_kinds, formats = _expand_per_col_leaf(percents)
+
+    return AxisBuildResult(
+        row_axis=row_axis,
+        col_axis=col_axis,
+        value_kinds=value_kinds,
+        formats=formats,
+    )
+
+
+def _build_row_axis(percents: PercentResult, spec: FreqSpec) -> Axis:
+    key = spec.keys[0]
+    label = (spec.label or {}).get(key)
+    row_dim = Dimension(
+        name=key,
+        kind="category",
+        categories=percents.row_categories,
+        label=label,
+    )
+
+    leaves: list[Node] = [
+        Node(path=(cat,), depth=1, span=1, role="data")
+        for cat in percents.row_categories
+    ]
+    if percents.has_row_total:
+        leaves.append(
+            Node(path=(TotalMarker(),), depth=1, span=1,
+                 role="total", label="Total")
+        )
+
+    tree = Node(
+        path=(),
+        depth=0,
+        span=sum(leaf.span for leaf in leaves),
+        role="data",
+        children=tuple(leaves),
+    )
+    return Axis(dims=(row_dim,), tree=tree)
+
+
+def _build_col_axis_one_way(percents: PercentResult) -> Axis:
+    stat_dim = Dimension(
+        name="_stat",
+        kind="stat",
+        categories=percents.stat_categories,
+    )
+    leaves = tuple(
+        Node(path=(stat,), depth=1, span=1, role="data")
+        for stat in percents.stat_categories
+    )
+    tree = Node(
+        path=(),
+        depth=0,
+        span=sum(leaf.span for leaf in leaves),
+        role="data",
+        children=leaves,
+    )
+    return Axis(dims=(stat_dim,), tree=tree)
+
+
+def _build_col_axis_two_way(percents: PercentResult, spec: FreqSpec) -> Axis:
+    col_key = spec.keys[1]
+    col_label = (spec.label or {}).get(col_key)
+    col_dim = Dimension(
+        name=col_key,
+        kind="category",
+        categories=percents.col_categories,
+        label=col_label,
+    )
+    stat_dim = Dimension(
+        name="_stat",
+        kind="stat",
+        categories=percents.stat_categories,
+    )
+
+    branches: list[Node] = []
+    for cat in percents.col_categories:
+        stat_leaves = tuple(
+            Node(path=(cat, stat), depth=2, span=1, role="data")
+            for stat in percents.stat_categories
+        )
+        branches.append(Node(
+            path=(cat,),
+            depth=1,
+            span=sum(leaf.span for leaf in stat_leaves),
+            role="data",
+            children=stat_leaves,
+        ))
+
+    if percents.has_col_total:
+        total_marker = TotalMarker()
+        stat_leaves = tuple(
+            Node(path=(total_marker, stat), depth=2, span=1, role="total")
+            for stat in percents.stat_categories
+        )
+        branches.append(Node(
+            path=(total_marker,),
+            depth=1,
+            span=sum(leaf.span for leaf in stat_leaves),
+            role="total",
+            label="Total",
+            children=stat_leaves,
+        ))
+
+    tree = Node(
+        path=(),
+        depth=0,
+        span=sum(b.span for b in branches),
+        role="data",
+        children=tuple(branches),
+    )
+    return Axis(dims=(col_dim, stat_dim), tree=tree)
+
+
+def _expand_per_col_leaf(
+    percents: PercentResult,
+) -> tuple[tuple[ValueKind, ...], tuple[str | None, ...]]:
+    """Expand per-stat value_kinds/formats to per-col-leaf.
+
+    One-way: same as per-stat (col leaves = stat leaves).
+    Two-way: tiled across (n col cats + optional Total col) groups.
+    """
+    if percents.col_categories is None:
+        return percents.stat_value_kinds, tuple(percents.stat_formats)
+
+    n_col_groups = len(percents.col_categories) + (
+        1 if percents.has_col_total else 0
+    )
+    value_kinds = percents.stat_value_kinds * n_col_groups
+    formats: tuple[str | None, ...] = percents.stat_formats * n_col_groups
+    return value_kinds, formats
