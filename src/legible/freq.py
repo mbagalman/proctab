@@ -1,14 +1,25 @@
 """`freq()` — frequency tables and crosstabs. See FREQ_API.md for design.
 
-This module currently contains the internal spec representation and argument
-parser. The public `freq()` function arrives in a later ticket (F6).
+Currently exposes:
+- `FreqSpec` (F1): parsed-and-validated arg representation.
+- `_parse_freq_args()` (F2): user args → FreqSpec.
+- `CountResult` + `aggregate_counts()` (F4a): raw count matrix from a
+  narwhals-wrapped DataFrame.
+
+The public `freq()` function arrives in F6.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+import narwhals.stable.v1 as nw
+import numpy as np
+
+from legible.model import Category
 
 
 @dataclass(frozen=True)
@@ -148,3 +159,151 @@ def _validate_key_sequence(seq: Sequence) -> tuple[str, ...]:
     if any(not k for k in items):
         raise ValueError("freq() keys must be non-empty strings.")
     return items
+
+
+# === F4a: raw count aggregation ============================================
+
+
+@dataclass(frozen=True)
+class CountResult:
+    """Output of `aggregate_counts()` — raw integer counts per cell, with
+    ordered category lists per grouping key.
+
+    `counts` shape is `(R,)` for a one-way table and `(R, C)` for a two-way
+    crosstab, where `R = len(row_categories)` and `C = len(col_categories)`.
+    Marginals are NOT pre-stored; downstream code derives them as
+    `counts.sum(axis=...)`. Total rows / columns are likewise NOT included
+    here — they're added by F4b/F5 when assembling the final Table.
+
+    A `Category(value=None, label="Missing")` may appear (always last) in
+    a categories tuple if the corresponding source column had nulls and
+    `dropna=False`.
+    """
+
+    row_categories: tuple[Category, ...]
+    col_categories: tuple[Category, ...] | None
+    counts: np.ndarray
+
+
+def aggregate_counts(nw_df: nw.DataFrame, spec: FreqSpec) -> CountResult:
+    """Compute raw counts per cell from a narwhals-wrapped DataFrame.
+
+    Engine-agnostic: works on whatever native frame the user wrapped via
+    `legible._engine.wrap()`. Honors `spec.dropna`, `spec.levels`, and
+    `spec.observed` as defined in FREQ_API.md.
+
+    Raises `ValueError` if `spec.observed=False` and no explicit
+    `spec.levels[key]` was supplied (Categorical/Enum dtype detection is
+    deferred to v0.2).
+    """
+    keys = list(spec.keys)
+
+    if spec.dropna:
+        nw_df = nw_df.drop_nulls(subset=keys)
+
+    row_categories = _resolve_categories(nw_df, keys[0], spec)
+    col_categories = (
+        _resolve_categories(nw_df, keys[1], spec) if len(keys) == 2 else None
+    )
+
+    if col_categories is None:
+        counts = _build_counts_1d(nw_df, keys, row_categories)
+    else:
+        counts = _build_counts_2d(nw_df, keys, row_categories, col_categories)
+
+    return CountResult(
+        row_categories=row_categories,
+        col_categories=col_categories,
+        counts=counts,
+    )
+
+
+def _resolve_categories(
+    nw_df: nw.DataFrame, key: str, spec: FreqSpec,
+) -> tuple[Category, ...]:
+    """Build the ordered category list for one grouping key.
+
+    Priority: `spec.levels[key]` if provided, else sorted observed unique
+    values. A `Category(None, label="Missing")` is appended (last) when
+    the column has nulls and `dropna=False`.
+    """
+    if spec.levels and key in spec.levels:
+        return tuple(Category(v) for v in spec.levels[key])
+
+    if not spec.observed:
+        raise ValueError(
+            f"observed=False on column {key!r} requires explicit "
+            f"levels= to specify the domain; Categorical/Enum dtype "
+            f"detection is planned for v0.2."
+        )
+
+    unique_values = nw_df[key].unique().to_list()
+
+    non_nulls: list[Any] = []
+    has_nulls = False
+    for v in unique_values:
+        if _is_null(v):
+            has_nulls = True
+        else:
+            non_nulls.append(v)
+
+    try:
+        non_nulls.sort()
+    except TypeError:
+        # Mixed types in the column — fall back to observed order
+        pass
+
+    cats = [Category(v) for v in non_nulls]
+    if has_nulls and not spec.dropna:
+        cats.append(Category(None, label="Missing"))
+    return tuple(cats)
+
+
+def _build_counts_1d(
+    nw_df: nw.DataFrame,
+    keys: list[str],
+    row_categories: tuple[Category, ...],
+) -> np.ndarray:
+    cat_to_idx = {cat.value: i for i, cat in enumerate(row_categories)}
+    counts = np.zeros(len(row_categories), dtype=np.float64)
+    grouped = nw_df.group_by(keys).agg(nw.len().alias("__n__"))
+    for row in grouped.iter_rows(named=True):
+        value = _normalize(row[keys[0]])
+        idx = cat_to_idx.get(value)
+        if idx is not None:
+            counts[idx] = row["__n__"]
+    return counts
+
+
+def _build_counts_2d(
+    nw_df: nw.DataFrame,
+    keys: list[str],
+    row_categories: tuple[Category, ...],
+    col_categories: tuple[Category, ...],
+) -> np.ndarray:
+    row_idx = {cat.value: i for i, cat in enumerate(row_categories)}
+    col_idx = {cat.value: i for i, cat in enumerate(col_categories)}
+    counts = np.zeros(
+        (len(row_categories), len(col_categories)), dtype=np.float64
+    )
+    grouped = nw_df.group_by(keys).agg(nw.len().alias("__n__"))
+    for row in grouped.iter_rows(named=True):
+        r = row_idx.get(_normalize(row[keys[0]]))
+        c = col_idx.get(_normalize(row[keys[1]]))
+        if r is not None and c is not None:
+            counts[r, c] = row["__n__"]
+    return counts
+
+
+def _is_null(value: Any) -> bool:
+    """Cross-engine null check: pandas exposes NaN, polars exposes None."""
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return False
+
+
+def _normalize(value: Any) -> Any:
+    """Normalize null forms (NaN, None) to None for consistent dict lookup."""
+    return None if _is_null(value) else value

@@ -13,7 +13,9 @@
       "Bash(git init *)",
       "Bash(git commit -m ' *)",
       "Bash(.venv/Scripts/python.exe -c \"import narwhals, pandas, polars; print\\(f'narwhals {narwhals.__version__}, pandas {pandas.__version__}, polars {polars.__version__}'\\)\")",
-      "Bash(.venv/Scripts/python.exe -m pytest)"
+      "Bash(.venv/Scripts/python.exe -m pytest)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_freq_aggregate.py -v)"
     ],
     "additionalDirectories": [
       "c:\\Users\\micha\\.claude\\projects\\c--Users-micha-Documents-GitHub-Legible\\memory"
