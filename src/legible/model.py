@@ -136,6 +136,13 @@ class Axis:
                 f"depth={node.depth}"
             )
 
+        n_dims = len(self.dims)
+        if node.depth > n_dims:
+            raise ValueError(
+                f"node {node_id}: depth {node.depth} exceeds axis dim "
+                f"count {n_dims}"
+            )
+
         has_subtotal, has_total = self._validate_path(node, node_id)
 
         if node.depth > 0:

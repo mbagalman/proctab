@@ -314,6 +314,20 @@ class TestAxisValidateHardening:
 
     # --- recursion ---
 
+    def test_node_depth_exceeds_axis_dim_count_raises_valueerror_not_indexerror(self):
+        """A node whose depth exceeds the axis's dim count must raise
+        ValueError, never IndexError. Regression test for the path-indexing
+        bug where _validate_path() would crash before the leaf-level
+        n_dims check could fire."""
+        cat_a = Category("A")
+        cat_b = Category("B")
+        dim = Dimension(name="x", kind="category", categories=(cat_a,))
+        # leaf with path of length 2 in a 1-dim axis
+        bad_leaf = Node(path=(cat_a, cat_b), depth=2, span=1, role="data")
+        tree = Node(path=(), depth=0, span=1, role="data", children=(bad_leaf,))
+        with pytest.raises(ValueError, match="exceeds axis dim count"):
+            Axis(dims=(dim,), tree=tree).validate()
+
     def test_validation_recurses_to_deep_bad_node(self):
         cat_a = Category("A")
         cat_b = Category("B")
