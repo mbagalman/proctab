@@ -1,0 +1,4 @@
+# Normalize all text files to LF in the working tree, on every platform.
+# Avoids the Windows core.autocrlf=true behavior where files appear
+# modified immediately after commit due to LF/CRLF round-tripping.
+* text=auto eol=lf

@@ -10,7 +10,8 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_examples.py::test_axes_validate -v)",
       "Bash(git --version)",
       "Bash(git config *)",
-      "Bash(git init *)"
+      "Bash(git init *)",
+      "Bash(git commit -m ' *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\micha\\.claude\\projects\\c--Users-micha-Documents-GitHub-Legible\\memory"
