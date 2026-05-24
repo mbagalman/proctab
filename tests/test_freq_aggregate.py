@@ -115,6 +115,56 @@ class TestNullHandling:
         assert result.row_categories[-1].label == "Missing"
 
 
+class TestLevelsNullInteraction:
+    """`levels=` must still honor the dropna=False Missing-category policy.
+
+    Regression coverage for the reviewer's finding that the old fast-path
+    return from _resolve_categories() silently dropped null grouping rows
+    when levels= was supplied.
+    """
+
+    @pytest.fixture(params=["pandas", "polars"])
+    def df_with_nulls(self, request):
+        data = {"region": ["East", "West", None, "West"]}
+        if request.param == "pandas":
+            pd = pytest.importorskip("pandas")
+            return pd.DataFrame(data)
+        pl = pytest.importorskip("polars")
+        return pl.DataFrame(data)
+
+    def test_levels_with_nulls_dropna_false_appends_missing(self, df_with_nulls):
+        result = aggregate_counts(
+            wrap(df_with_nulls),
+            _spec("region", levels={"region": ["East", "West"]}),
+        )
+        values = [c.value for c in result.row_categories]
+        assert values == ["East", "West", None]
+        assert result.row_categories[-1].label == "Missing"
+        np.testing.assert_array_equal(result.counts, [1, 2, 1])
+
+    def test_levels_with_nulls_dropna_true_no_missing(self, df_with_nulls):
+        result = aggregate_counts(
+            wrap(df_with_nulls),
+            _spec("region", levels={"region": ["East", "West"]}, dropna=True),
+        )
+        values = [c.value for c in result.row_categories]
+        assert values == ["East", "West"]
+        np.testing.assert_array_equal(result.counts, [1, 2])
+
+    def test_levels_with_explicit_none_no_double_missing(self, df_with_nulls):
+        # User explicitly listed None in levels — don't double-append.
+        # User's Category(None) is used as-is (no "Missing" label).
+        result = aggregate_counts(
+            wrap(df_with_nulls),
+            _spec("region", levels={"region": ["East", "West", None]}),
+        )
+        values = [c.value for c in result.row_categories]
+        assert values == ["East", "West", None]
+        # No "Missing" label — user provided None explicitly without a label
+        assert result.row_categories[-1].label is None
+        np.testing.assert_array_equal(result.counts, [1, 2, 1])
+
+
 class TestObservedFalse:
     def test_observed_false_without_levels_raises(self, sample_df):
         with pytest.raises(ValueError, match="observed=False"):

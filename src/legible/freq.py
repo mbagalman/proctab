@@ -231,12 +231,25 @@ def _resolve_categories(
 ) -> tuple[Category, ...]:
     """Build the ordered category list for one grouping key.
 
-    Priority: `spec.levels[key]` if provided, else sorted observed unique
-    values. A `Category(None, label="Missing")` is appended (last) when
-    the column has nulls and `dropna=False`.
+    Priority: `spec.levels[key]` if provided (user-supplied exact order),
+    else sorted observed unique values. In both cases, a `Category(None,
+    label="Missing")` is appended (last) when the column has nulls and
+    `dropna=False` — unless the user has already included `None` in
+    their `levels=` list, in which case their `Category(None)` is used
+    as-is (no label override).
     """
     if spec.levels and key in spec.levels:
-        return tuple(Category(v) for v in spec.levels[key])
+        levels_seq = list(spec.levels[key])
+        cats = [Category(v) for v in levels_seq]
+        # Honor dropna=False even with explicit levels: if the column has
+        # nulls and the user didn't already include None, append Missing.
+        if (
+            not spec.dropna
+            and None not in levels_seq
+            and _column_has_nulls(nw_df, key)
+        ):
+            cats.append(Category(None, label="Missing"))
+        return tuple(cats)
 
     if not spec.observed:
         raise ValueError(
@@ -265,6 +278,11 @@ def _resolve_categories(
     if has_nulls and not spec.dropna:
         cats.append(Category(None, label="Missing"))
     return tuple(cats)
+
+
+def _column_has_nulls(nw_df: nw.DataFrame, key: str) -> bool:
+    """Engine-agnostic null check across the column."""
+    return bool(nw_df[key].is_null().any())
 
 
 def _build_counts_1d(
@@ -353,9 +371,20 @@ class PercentResult:
     `(R + has_row_total, (C + has_col_total) * n_stats)` for two-way,
     where Total rows/cols sit AFTER all data rows/cols.
 
-    `MissingReason.NOT_APPLICABLE` is set on percentage cells whose
-    denominator is zero (divide-by-zero protection). N cells are always
-    PRESENT — a count of zero is meaningful, not missing.
+    `MissingReason` assignment:
+
+    - `NOT_APPLICABLE` — percentage cells whose denominator is zero
+      (divide-by-zero protection).
+    - `EMPTY` — N cells whose count is zero, and percentage cells whose
+      numerator is zero (no source records contributed; the percent would
+      compute to 0% but isn't derived from real data).
+    - `PRESENT` — everywhere else. For one-way, `CumN` / `CumPct` are
+      always PRESENT (they're running aggregates over prior positions,
+      not per-cell values, so they're meaningful even at a zero-count
+      position).
+
+    Renderers can choose to display EMPTY cells as blank or as "0" per
+    their style; the model just records that no records contributed.
     """
 
     row_categories: tuple[Category, ...]
@@ -397,15 +426,15 @@ def _derive_one_way(counts: CountResult, spec: FreqSpec) -> PercentResult:
     for i in range(n_categories):
         n = float(raw[i])
         running += n
-        body[i, 0] = n                 # N
-        body[i, 2] = running           # CumN
+        _set_count(body, missing, i, 0, n)              # N
+        body[i, 2] = running                             # CumN (always PRESENT)
         _set_percent(body, missing, i, 1, n,       grand_total)
         _set_percent(body, missing, i, 3, running, grand_total)
 
     if has_row_total:
         t = n_categories
-        body[t, 0] = grand_total       # N
-        body[t, 2] = grand_total       # CumN (= grand)
+        _set_count(body, missing, t, 0, grand_total)    # N (EMPTY if grand=0)
+        body[t, 2] = grand_total                         # CumN (always PRESENT)
         _set_percent(body, missing, t, 1, grand_total, grand_total)
         _set_percent(body, missing, t, 3, grand_total, grand_total)
 
@@ -461,22 +490,22 @@ def _derive_two_way(counts: CountResult, spec: FreqSpec) -> PercentResult:
             n = float(raw[i, j])
             cs = float(col_sums[j])
             base = j * n_stats
-            body[i, base + 0] = n
-            _set_percent(body, missing, i, base + 1, n, rs)            # Row%
-            _set_percent(body, missing, i, base + 2, n, cs)            # Col%
-            _set_percent(body, missing, i, base + 3, n, grand_total)   # Tot%
+            _set_count(body, missing, i, base + 0, n)                    # N
+            _set_percent(body, missing, i, base + 1, n, rs)              # Row%
+            _set_percent(body, missing, i, base + 2, n, cs)              # Col%
+            _set_percent(body, missing, i, base + 3, n, grand_total)     # Tot%
 
     # Total column (across cols of each data row)
     if has_col_total:
         tc_base = n_cols_data * n_stats
         for i in range(n_rows_data):
             rs = float(row_sums[i])
-            body[i, tc_base + 0] = rs                                # N
-            body[i, tc_base + 1] = 100.0 if rs > 0 else 0.0          # Row% (by def)
-            if rs == 0:
-                missing[i, tc_base + 1] = MissingReason.NOT_APPLICABLE
-            _set_percent(body, missing, i, tc_base + 2, rs, grand_total)  # Col%
-            _set_percent(body, missing, i, tc_base + 3, rs, grand_total)  # Tot%
+            _set_count(body, missing, i, tc_base + 0, rs)                # N
+            # Row% of Total col = rs/rs ⇒ 100 if rs>0, NA if rs==0.
+            # numer == denom so the EMPTY branch is impossible.
+            _set_percent(body, missing, i, tc_base + 1, rs, rs)          # Row%
+            _set_percent(body, missing, i, tc_base + 2, rs, grand_total) # Col%
+            _set_percent(body, missing, i, tc_base + 3, rs, grand_total) # Tot%
 
     # Total row (across rows of each data col)
     if has_row_total:
@@ -484,22 +513,20 @@ def _derive_two_way(counts: CountResult, spec: FreqSpec) -> PercentResult:
         for j in range(n_cols_data):
             cs = float(col_sums[j])
             base = j * n_stats
-            body[tr, base + 0] = cs                                   # N
+            _set_count(body, missing, tr, base + 0, cs)                  # N
             _set_percent(body, missing, tr, base + 1, cs, grand_total)   # Row%
-            body[tr, base + 2] = 100.0 if cs > 0 else 0.0             # Col% (by def)
-            if cs == 0:
-                missing[tr, base + 2] = MissingReason.NOT_APPLICABLE
+            # Col% of Total row = cs/cs ⇒ 100 if cs>0, NA if cs==0.
+            _set_percent(body, missing, tr, base + 2, cs, cs)            # Col%
             _set_percent(body, missing, tr, base + 3, cs, grand_total)   # Tot%
 
         # Grand Total cell (Total row × Total col)
         if has_col_total:
             tc_base = n_cols_data * n_stats
-            body[tr, tc_base + 0] = grand_total
+            _set_count(body, missing, tr, tc_base + 0, grand_total)      # N
             for s in range(1, n_stats):
-                if grand_total > 0:
-                    body[tr, tc_base + s] = 100.0
-                else:
-                    missing[tr, tc_base + s] = MissingReason.NOT_APPLICABLE
+                # All Grand Total percent cells = grand/grand ⇒ 100 or NA.
+                _set_percent(body, missing, tr, tc_base + s,
+                             grand_total, grand_total)
 
     return PercentResult(
         row_categories=counts.row_categories,
@@ -523,12 +550,33 @@ def _set_percent(
     denominator: float,
 ) -> None:
     """Write `numerator / denominator * 100` to body[i, j], or flag the
-    cell as NOT_APPLICABLE if the denominator is zero. Centralizes the
-    divide-by-zero contract for every percent-stat cell."""
-    if denominator > 0:
-        body[i, j] = numerator / denominator * 100.0
-    else:
+    cell as a MissingReason. Centralizes the missing/percent contract:
+
+    - denominator <= 0 → NOT_APPLICABLE (divide-by-zero protection)
+    - numerator == 0 (with denominator > 0) → EMPTY (no source records
+      contributed; the value would be 0% but it's not derived from data)
+    - otherwise → PRESENT, value = numer / denom * 100
+    """
+    if denominator <= 0:
         missing[i, j] = MissingReason.NOT_APPLICABLE
+    elif numerator == 0:
+        missing[i, j] = MissingReason.EMPTY
+    else:
+        body[i, j] = numerator / denominator * 100.0
+
+
+def _set_count(
+    body: np.ndarray,
+    missing: np.ndarray,
+    i: int,
+    j: int,
+    count: float,
+) -> None:
+    """Write a count to body[i, j]; flag EMPTY if the count is zero
+    (no source records contributed)."""
+    body[i, j] = count
+    if count == 0:
+        missing[i, j] = MissingReason.EMPTY
 
 
 # === F5: axis construction =================================================

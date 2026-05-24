@@ -98,15 +98,17 @@ class TestOneWayEdge:
         assert result.body.shape == (0, 4)
         assert result.has_row_total is False
 
-    def test_all_zero_counts_na_percent_cells(self):
+    def test_all_zero_counts_n_empty_pct_na_cumn_present(self):
         result = derive_percentages(
             _counts_1d([0, 0, 0]), _spec(("x",), totals=True))
-        # N and CumN cells are PRESENT with value 0
+        # Body values are 0 for N and CumN
         np.testing.assert_array_equal(result.body[:, 0], [0, 0, 0, 0])
         np.testing.assert_array_equal(result.body[:, 2], [0, 0, 0, 0])
-        assert np.all(result.missing[:, 0] == MissingReason.PRESENT)
+        # N: EMPTY (count = 0, no records contributed)
+        assert np.all(result.missing[:, 0] == MissingReason.EMPTY)
+        # CumN: PRESENT (running aggregate; value 0 is meaningful)
         assert np.all(result.missing[:, 2] == MissingReason.PRESENT)
-        # Pct and CumPct: NA across the board (divide by zero)
+        # Pct and CumPct: NA across the board (grand total = 0, div-by-zero)
         assert np.all(result.missing[:, 1] == MissingReason.NOT_APPLICABLE)
         assert np.all(result.missing[:, 3] == MissingReason.NOT_APPLICABLE)
 
@@ -116,6 +118,22 @@ class TestOneWayEdge:
         np.testing.assert_array_equal(result.body[:, 1], [100.0, 100.0])
         np.testing.assert_array_equal(result.body[:, 2], [5, 5])
         np.testing.assert_array_equal(result.body[:, 3], [100.0, 100.0])
+
+    def test_one_zero_count_among_nonzeros_one_way(self):
+        # counts [5, 0, 3]: middle row's N and Pct are EMPTY; CumN/CumPct
+        # stay PRESENT because they're running aggregates.
+        result = derive_percentages(
+            _counts_1d([5, 0, 3]), _spec(("x",), totals=True))
+        # Row 1 (count=0): N EMPTY, Pct EMPTY, CumN/CumPct PRESENT
+        assert result.missing[1, 0] == MissingReason.EMPTY
+        assert result.missing[1, 1] == MissingReason.EMPTY
+        assert result.missing[1, 2] == MissingReason.PRESENT
+        assert result.body[1, 2] == 5  # running total = 5 through this row
+        assert result.missing[1, 3] == MissingReason.PRESENT
+        assert result.body[1, 3] == pytest.approx(5/8*100)
+        # Non-zero rows are fully PRESENT
+        assert result.missing[0, 0] == MissingReason.PRESENT
+        assert result.missing[2, 0] == MissingReason.PRESENT
 
 
 # === Two-way ================================================================
@@ -222,26 +240,47 @@ class TestTwoWayBasic:
 
 
 class TestTwoWayDivByZero:
-    def test_all_zero_row_marks_row_percent_na(self):
-        # Row 1 is all zeros → row_sum[1] = 0 → Row% NA in row 1
+    def test_all_zero_row_marks_row_percent_na_and_count_empty(self):
+        # Row 1 is all zeros → row_sum[1] = 0 → Row% NA in row 1.
+        # Counts in that row are 0 → N cells EMPTY. Col% / Tot% with
+        # denom > 0 and numer = 0 → EMPTY (not NA).
         result = derive_percentages(
             _counts_2d([[1, 1], [0, 0], [1, 1]]),
             _spec(("r", "c"), totals=True),
         )
-        # Row% in row 1: data cols + Total col
+        # Row% in row 1 (data cols + Total col): NA (divide-by-zero, rs=0)
         assert result.missing[1, 1] == MissingReason.NOT_APPLICABLE
         assert result.missing[1, 5] == MissingReason.NOT_APPLICABLE
         assert result.missing[1, 9] == MissingReason.NOT_APPLICABLE
-        # N in row 1 is still PRESENT with value 0
-        assert result.missing[1, 0] == MissingReason.PRESENT
+        # N in row 1: EMPTY (count = 0)
+        assert result.missing[1, 0] == MissingReason.EMPTY
         assert result.body[1, 0] == 0
-        # Col% in row 1: denominators are col_sums (>0), so values are
-        # 0/col_sum * 100 = 0 — PRESENT, not NA
-        assert result.missing[1, 2] == MissingReason.PRESENT
+        # Col% in row 1: numer=0, denom=col_sum (>0) → EMPTY
+        assert result.missing[1, 2] == MissingReason.EMPTY
         assert result.body[1, 2] == 0
-        # Other rows have valid Row%
+        # Tot% in row 1: numer=0, denom=grand (>0) → EMPTY
+        assert result.missing[1, 3] == MissingReason.EMPTY
+        # Other rows have valid Row% (PRESENT)
         assert result.missing[0, 1] == MissingReason.PRESENT
         assert result.missing[2, 1] == MissingReason.PRESENT
+
+    def test_reviewer_diagonal_zero_cells_are_empty(self):
+        # Reviewer's regression case: [[1, 0], [0, 1]] — off-diagonal
+        # zero-count combinations should be EMPTY, not silently PRESENT
+        # with zero values.
+        result = derive_percentages(
+            _counts_2d([[1, 0], [0, 1]]),
+            _spec(("r", "c"), totals=True),
+        )
+        # Cell (0, 1): count=0 — all 4 stats EMPTY (j=1, col index 4-7)
+        for s in range(4):
+            assert result.missing[0, 4 + s] == MissingReason.EMPTY
+        # Cell (1, 0): count=0 — all 4 stats EMPTY (j=0, col index 0-3)
+        for s in range(4):
+            assert result.missing[1, s] == MissingReason.EMPTY
+        # Non-zero cells PRESENT
+        assert result.missing[0, 0] == MissingReason.PRESENT  # (0,0) n=1
+        assert result.missing[1, 4] == MissingReason.PRESENT  # (1,1) n=1
 
     def test_all_zero_col_marks_col_percent_na(self):
         # Col 1 all zeros → col_sum[1] = 0 → Col% NA in col 1
