@@ -12,7 +12,6 @@ Internal pipeline (also importable for testing):
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -20,6 +19,12 @@ from typing import Any
 import narwhals.stable.v1 as nw
 import numpy as np
 
+from legible._categories import (
+    column_has_nulls as _column_has_nulls,
+    is_null as _is_null,
+    normalize as _normalize,
+    resolve_categories,
+)
 from legible._engine import wrap
 from legible.model import (
     Axis,
@@ -232,60 +237,13 @@ def aggregate_counts(nw_df: nw.DataFrame, spec: FreqSpec) -> CountResult:
 def _resolve_categories(
     nw_df: nw.DataFrame, key: str, spec: FreqSpec,
 ) -> tuple[Category, ...]:
-    """Build the ordered category list for one grouping key.
-
-    Priority: `spec.levels[key]` if provided (user-supplied exact order),
-    else sorted observed unique values. In both cases, a `Category(None,
-    label="Missing")` is appended (last) when the column has nulls and
-    `dropna=False` — unless the user has already included `None` in
-    their `levels=` list, in which case their `Category(None)` is used
-    as-is (no label override).
-    """
-    if spec.levels and key in spec.levels:
-        levels_seq = list(spec.levels[key])
-        cats = [Category(v) for v in levels_seq]
-        # Honor dropna=False even with explicit levels: if the column has
-        # nulls and the user didn't already include None, append Missing.
-        if (
-            not spec.dropna
-            and None not in levels_seq
-            and _column_has_nulls(nw_df, key)
-        ):
-            cats.append(Category(None, label="Missing"))
-        return tuple(cats)
-
-    if not spec.observed:
-        raise ValueError(
-            f"observed=False on column {key!r} requires explicit "
-            f"levels= to specify the domain; Categorical/Enum dtype "
-            f"detection is planned for v0.2."
-        )
-
-    unique_values = nw_df[key].unique().to_list()
-
-    non_nulls: list[Any] = []
-    has_nulls = False
-    for v in unique_values:
-        if _is_null(v):
-            has_nulls = True
-        else:
-            non_nulls.append(v)
-
-    try:
-        non_nulls.sort()
-    except TypeError:
-        # Mixed types in the column — fall back to observed order
-        pass
-
-    cats = [Category(v) for v in non_nulls]
-    if has_nulls and not spec.dropna:
-        cats.append(Category(None, label="Missing"))
-    return tuple(cats)
-
-
-def _column_has_nulls(nw_df: nw.DataFrame, key: str) -> bool:
-    """Engine-agnostic null check across the column."""
-    return bool(nw_df[key].is_null().any())
+    """Thin freq-specific wrapper around the shared `resolve_categories`."""
+    return resolve_categories(
+        nw_df, key,
+        observed=spec.observed,
+        dropna=spec.dropna,
+        levels=spec.levels,
+    )
 
 
 def _build_counts_1d(
@@ -322,20 +280,6 @@ def _build_counts_2d(
         if r is not None and c is not None:
             counts[r, c] = row["__n__"]
     return counts
-
-
-def _is_null(value: Any) -> bool:
-    """Cross-engine null check: pandas exposes NaN, polars exposes None."""
-    if value is None:
-        return True
-    if isinstance(value, float) and math.isnan(value):
-        return True
-    return False
-
-
-def _normalize(value: Any) -> Any:
-    """Normalize null forms (NaN, None) to None for consistent dict lookup."""
-    return None if _is_null(value) else value
 
 
 # === F4b: percentage derivation + MissingReason ============================

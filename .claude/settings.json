@@ -21,7 +21,8 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_freq_integration.py -v)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_freq_edge_cases.py -v)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_spec.py -v)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_stats.py -v)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_stats.py -v)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_aggregate.py -v)"
     ],
     "additionalDirectories": [
       "c:\\Users\\micha\\.claude\\projects\\c--Users-micha-Documents-GitHub-Legible\\memory"

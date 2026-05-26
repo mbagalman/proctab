@@ -9,7 +9,7 @@ The bare data model and a renderer that proves it works. No aggregation yet.
 - [x] Data containers: `Table`, `Axis`, `Dimension`, `Node`, `Category`, `Marker`, `MissingReason`, `ValueKind`
 - [x] Hand-built tables for the four worked examples in [VISION.md](VISION.md) (`src/legible/examples.py`)
 - [x] Plain-text renderer (`src/legible/render/text.py`)
-- [x] Initial test suite (421 passing — pandas/polars exercised from F3 onward)
+- [x] Initial test suite (478 passing — pandas/polars exercised from F3 onward)
 - [x] Hardened `Axis.validate()`: full-tree walk; span correctness; `len(path) == depth` consistency; malformed-branch-path detection
 - [ ] CI: GitHub Actions running lint + test on Python 3.10–3.14
 - [ ] Choose final project name (currently using `legible` as a working name)
@@ -37,7 +37,7 @@ First release someone might actually try. Each feature gets a design memo before
 - [x] **T1.** `TabSpec` dataclass — internal parsed-args representation (rows, cols, values_spec as ordered `(metric, stat)` tuples, subtotals, totals, observed, dropna, levels, label)
 - [x] **T2.** `_parse_tabulate_args()` — validate rows/cols/values shape; normalize `values={"revenue": "sum"}` shorthand to tuple; check stat names against the v0.1 set; check subtotals subset (and reject innermost-dim subtotal); reject reserved kwargs; surface a clear error for `"weighted_mean"`
 - [x] **T3.** Stat-function registry — module-level mapping of `{"sum", "mean", "count", "min", "max", "median"}` to NaN-aware narwhals expressions
-- [ ] **T4a.** Aggregation kernel — data-cell aggregation: `nw_df.group_by(rows + cols).agg(...)` over every requested `(metric, stat)`; materialize into numpy and permute into the final body shape
+- [x] **T4a.** Aggregation kernel — data-cell aggregation: `nw_df.group_by(rows + cols).agg(...)` over every requested `(metric, stat)`; materialize into numpy and permute into the final body shape
 - [ ] **T4b.** Aggregation kernel — subtotals + grand total: additional groupby passes (one per subtotal level + one for grand total) computed FROM SOURCE (not by summing leaf cells; required for non-additive stats like mean/median)
 - [ ] **T4c.** Aggregation kernel — `MissingReason` assignment using BOTH companion signals (row count per group + non-null count per `(group, metric)`) so `EMPTY` (no source records) is distinguished from `NULL` (records exist but metric all-null). Without this, `sum` on an all-null group looks like a real zero.
 - [ ] **T5.** Axis construction — multi-dim row tree with subtotal/total marker leaves; multi-dim col tree with sparse `(metric, stat)` leaves under each user col category; calls `Axis.validate()` on output

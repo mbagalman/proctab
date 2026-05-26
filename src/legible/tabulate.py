@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import narwhals.stable.v1 as nw
+import numpy as np
+
+from legible._categories import is_null, normalize, resolve_categories
+from legible.model import Category
 
 
 SUPPORTED_STATS: frozenset[str] = frozenset({
@@ -328,3 +332,161 @@ def _normalize_subtotals(
             )
 
     return items
+
+
+# === T4a: data-cell aggregation ============================================
+
+
+@dataclass(frozen=True)
+class AggregateResult:
+    """Output of `aggregate_data_cells()` — per-group statistic values
+    plus the companion signals T4c needs for `MissingReason` assignment.
+
+    Shapes:
+      stat_values:   (R, C, S)  one value per (group, stat-leaf)
+      row_count:     (R, C)     `nw.len()` per group — drives EMPTY detection
+      nonnull_count: (R, C, M)  `count()` per (group, metric) — drives NULL detection
+
+    Where:
+      R = product of row-dim category sizes (cross-product order)
+      C = product of col-dim category sizes (or 1 if `spec.cols` is empty)
+      S = len(spec.values_spec) — one entry per requested (metric, stat)
+      M = number of unique metrics (in `metric_names` order)
+
+    `row_categories` and `col_categories` are tuples-of-tuples (one tuple
+    per dim). T5 consumes these to build the row/col `Axis` trees; the
+    flat group ordering matches row-major flattening of those per-dim
+    cat lengths. T4b consumes the spec to compute subtotals/grand
+    totals; T4c consumes `row_count` + `nonnull_count` + `stat_values`
+    to fill the final body + missing matrices.
+    """
+
+    row_categories: tuple[tuple[Category, ...], ...]
+    col_categories: tuple[tuple[Category, ...], ...]
+    metric_names: tuple[str, ...]
+    stat_values: np.ndarray
+    row_count: np.ndarray
+    nonnull_count: np.ndarray
+
+
+def aggregate_data_cells(nw_df: nw.DataFrame, spec: TabSpec) -> AggregateResult:
+    """Compute per-group stat values from a narwhals-wrapped DataFrame.
+
+    Data cells only — subtotals and the grand total are computed by T4b
+    in separate groupby passes against source (required for non-additive
+    stats like mean/median).
+
+    A single narwhals `group_by(rows + cols).agg(...)` pass computes:
+    - `nw.len()` per group (the EMPTY signal for T4c)
+    - `nw.col(metric).count()` per unique metric (the NULL signal)
+    - `STAT_EXPRS[stat](metric)` per `(metric, stat)` in `spec.values_spec`
+    """
+    keys = list(spec.rows + spec.cols)
+
+    if spec.dropna:
+        nw_df = nw_df.drop_nulls(subset=keys)
+
+    row_cats_per_dim = tuple(
+        resolve_categories(nw_df, k, observed=spec.observed,
+                           dropna=spec.dropna, levels=spec.levels)
+        for k in spec.rows
+    )
+    col_cats_per_dim = tuple(
+        resolve_categories(nw_df, k, observed=spec.observed,
+                           dropna=spec.dropna, levels=spec.levels)
+        for k in spec.cols
+    )
+
+    row_dim_sizes = [len(c) for c in row_cats_per_dim]
+    col_dim_sizes = [len(c) for c in col_cats_per_dim]
+    n_rows = _product(row_dim_sizes) if row_dim_sizes else 0
+    n_cols = _product(col_dim_sizes) if col_dim_sizes else 1
+
+    metric_names = tuple(dict.fromkeys(m for m, _ in spec.values_spec))
+    n_metrics = len(metric_names)
+    n_stats = len(spec.values_spec)
+
+    stat_values = np.zeros((n_rows, n_cols, n_stats), dtype=np.float64)
+    row_count = np.zeros((n_rows, n_cols), dtype=np.int64)
+    nonnull_count = np.zeros((n_rows, n_cols, n_metrics), dtype=np.int64)
+
+    if n_rows == 0 or (col_cats_per_dim and any(s == 0 for s in col_dim_sizes)):
+        # Some dim has no categories; nothing to aggregate.
+        return AggregateResult(
+            row_categories=row_cats_per_dim,
+            col_categories=col_cats_per_dim,
+            metric_names=metric_names,
+            stat_values=stat_values,
+            row_count=row_count,
+            nonnull_count=nonnull_count,
+        )
+
+    row_idx_maps = [{cat.value: i for i, cat in enumerate(cats)}
+                    for cats in row_cats_per_dim]
+    col_idx_maps = [{cat.value: j for j, cat in enumerate(cats)}
+                    for cats in col_cats_per_dim]
+    metric_idx_map = {m: i for i, m in enumerate(metric_names)}
+
+    aggs: list[nw.Expr] = [nw.len().alias("__rowcount__")]
+    for metric in metric_names:
+        aggs.append(nw.col(metric).count().alias(f"__nnc__{metric}"))
+    for idx, (metric, stat) in enumerate(spec.values_spec):
+        aggs.append(STAT_EXPRS[stat](metric).alias(f"__sv__{idx}"))
+
+    grouped = nw_df.group_by(keys).agg(*aggs)
+
+    for row in grouped.iter_rows(named=True):
+        r = _group_flat_index(row, spec.rows, row_idx_maps, row_dim_sizes)
+        if r is None:
+            continue
+        if col_cats_per_dim:
+            c = _group_flat_index(row, spec.cols, col_idx_maps, col_dim_sizes)
+            if c is None:
+                continue
+        else:
+            c = 0
+
+        row_count[r, c] = row["__rowcount__"]
+        for metric in metric_names:
+            nonnull_count[r, c, metric_idx_map[metric]] = row[f"__nnc__{metric}"]
+
+        for idx, (metric, stat) in enumerate(spec.values_spec):
+            v = row[f"__sv__{idx}"]
+            # Null stat results (e.g., mean of all-null group) materialize
+            # as 0.0; T4c uses nonnull_count to flag those cells NULL.
+            stat_values[r, c, idx] = 0.0 if is_null(v) else float(v)
+
+    return AggregateResult(
+        row_categories=row_cats_per_dim,
+        col_categories=col_cats_per_dim,
+        metric_names=metric_names,
+        stat_values=stat_values,
+        row_count=row_count,
+        nonnull_count=nonnull_count,
+    )
+
+
+def _product(xs: list[int]) -> int:
+    p = 1
+    for x in xs:
+        p *= x
+    return p
+
+
+def _group_flat_index(
+    row: dict,
+    keys: tuple[str, ...],
+    idx_maps: list[dict],
+    dim_sizes: list[int],
+) -> int | None:
+    """Convert a grouped row's key values into a flat row-major index.
+    Returns None if any value isn't in the corresponding idx_map (which
+    would happen if a group's category was filtered out by levels=)."""
+    flat = 0
+    for dim_i, key in enumerate(keys):
+        value = normalize(row[key])
+        idx = idx_maps[dim_i].get(value)
+        if idx is None:
+            return None
+        flat = flat * dim_sizes[dim_i] + idx
+    return flat
