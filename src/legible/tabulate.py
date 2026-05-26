@@ -2,20 +2,48 @@
 
 Currently exposes (internal pipeline; public `tabulate()` arrives in T6):
 - `SUPPORTED_STATS`: the v0.1 stat name set.
+- `STAT_EXPRS` (T3): stat name → narwhals expression callable.
 - `TabSpec` (T1): parsed-and-validated arg representation.
 - `_parse_tabulate_args()` (T2): user args → TabSpec.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+import narwhals.stable.v1 as nw
 
 
 SUPPORTED_STATS: frozenset[str] = frozenset({
     "sum", "mean", "count", "min", "max", "median",
 })
+
+
+# === T3: stat-function registry ============================================
+
+
+STAT_EXPRS: dict[str, Callable[[str], nw.Expr]] = {
+    "sum":    lambda col: nw.col(col).sum(),
+    "mean":   lambda col: nw.col(col).mean(),
+    "count":  lambda col: nw.col(col).count(),   # non-null count (pandas .count() semantics)
+    "min":    lambda col: nw.col(col).min(),
+    "max":    lambda col: nw.col(col).max(),
+    "median": lambda col: nw.col(col).median(),
+}
+"""Maps a v0.1 stat name to a callable that, given a column name, returns
+a narwhals expression suitable for use in `.agg(...)`. All entries are
+NaN-aware by the engine's default semantics:
+
+- `sum`, `mean`, `min`, `max`, `median`: nulls are skipped.
+- `count`: returns the count of non-null values (NOT row count). Row
+  count is computed separately via `nw.len()` in the aggregation kernel
+  to drive the EMPTY/NULL distinction per TABULATE_API.md T4c.
+
+Keys must stay in sync with `SUPPORTED_STATS`; an invariant test guards
+that pairing.
+"""
 
 
 @dataclass(frozen=True)
