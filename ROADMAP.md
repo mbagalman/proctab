@@ -33,8 +33,17 @@ First release someone might actually try. Each feature gets a design memo before
 
 ### `tabulate()` — multi-dimensional summary tables
 
-- [ ] Draft design memo: `TABULATE_API.md`
-- [ ] Implementation tickets
+- [x] Lock design memo: [TABULATE_API.md](TABULATE_API.md)
+- [ ] **T1.** `TabSpec` dataclass — internal parsed-args representation (rows, cols, values_spec as ordered `(metric, stat)` tuples, subtotals, totals, observed, dropna, levels, label)
+- [ ] **T2.** `_parse_tabulate_args()` — validate rows/cols/values shape; normalize `values={"revenue": "sum"}` shorthand to tuple; check stat names against the v0.1 set; check subtotals subset (and reject innermost-dim subtotal); reject reserved kwargs; surface a clear error for `"weighted_mean"`
+- [ ] **T3.** Stat-function registry — module-level mapping of `{"sum", "mean", "count", "min", "max", "median"}` to NaN-aware narwhals expressions
+- [ ] **T4a.** Aggregation kernel — data-cell aggregation: `nw_df.group_by(rows + cols).agg(...)` over every requested `(metric, stat)`; materialize into numpy and permute into the final body shape
+- [ ] **T4b.** Aggregation kernel — subtotals + grand total: additional groupby passes (one per subtotal level + one for grand total) computed FROM SOURCE (not by summing leaf cells; required for non-additive stats like mean/median)
+- [ ] **T4c.** Aggregation kernel — `MissingReason` assignment using BOTH companion signals (row count per group + non-null count per `(group, metric)`) so `EMPTY` (no source records) is distinguished from `NULL` (records exist but metric all-null). Without this, `sum` on an all-null group looks like a real zero.
+- [ ] **T5.** Axis construction — multi-dim row tree with subtotal/total marker leaves; multi-dim col tree with sparse `(metric, stat)` leaves under each user col category; calls `Axis.validate()` on output
+- [ ] **T6.** Public `tabulate()` — wire spec → wrap → aggregate → axes → Table
+- [ ] **T7.** Integration tests against a new `example_2_tabulate_v01()` fixture (structurally identical to existing `example_2_tabulate` but substituting `mean` for `weighted_mean` on margin; original stays as "future target"); pandas + polars
+- [ ] **T8.** Edge-case tests — dim caps (3+ rows, 2+ cols), unknown stat name, empty `values`, innermost-dim subtotal, reserved kwargs, empty df, null grouping cols + dropna both ways, `observed=False` + `levels=`, all-null value column (verifies the `NULL` vs `EMPTY` distinction)
 
 ### HTML renderer
 
