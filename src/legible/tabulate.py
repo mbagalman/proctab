@@ -226,6 +226,7 @@ def _normalize_values(
         )
 
     pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
     for metric, stat_spec in values.items():
         if not isinstance(metric, str) or not metric:
             raise TypeError(
@@ -266,6 +267,14 @@ def _normalize_values(
                     f"tabulate() values[{metric!r}] has unknown stat "
                     f"{stat!r}. v0.1 supports: {sorted(SUPPORTED_STATS)}."
                 )
+            if (metric, stat) in seen:
+                raise ValueError(
+                    f"tabulate() values[{metric!r}] has duplicate stat "
+                    f"{stat!r}; each (metric, stat) pair must appear at "
+                    f"most once (otherwise two col leaves would share the "
+                    f"same path)."
+                )
+            seen.add((metric, stat))
             pairs.append((metric, stat))
 
     return tuple(pairs)
@@ -295,6 +304,11 @@ def _normalize_subtotals(
         raise TypeError(
             f"tabulate() subtotals must be a string, list, or None; got "
             f"{type(subtotals).__name__}."
+        )
+
+    if len(set(items)) != len(items):
+        raise ValueError(
+            f"tabulate() subtotals must be unique; got {list(items)}."
         )
 
     extra = set(items) - set(rows)

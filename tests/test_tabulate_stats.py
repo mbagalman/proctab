@@ -127,6 +127,58 @@ def df_seven(request):
     return pl.DataFrame(data)
 
 
+@pytest.fixture(params=["pandas", "polars"])
+def df_all_null(request):
+    if request.param == "pandas":
+        pd = pytest.importorskip("pandas")
+        return pd.DataFrame({"x": pd.Series([None, None, None], dtype="Float64")})
+    pl = pytest.importorskip("polars")
+    return pl.DataFrame({"x": pl.Series([None, None, None], dtype=pl.Float64)})
+
+
+def _is_null_scalar(v):
+    """Detect any null form (None, pd.NA, NaN). pd.isna() covers all three."""
+    pd = pytest.importorskip("pandas")
+    return bool(pd.isna(v))
+
+
+class TestAllNullBehavior:
+    """Documents how each stat behaves on all-null input. The T4c
+    aggregation kernel will rely on these specific signals — especially
+    that `sum` returns 0.0 (NOT null) for all-null groups — to drive
+    the EMPTY vs NULL distinction via a companion non-null count.
+
+    If any of these engine behaviors changes in a future narwhals or
+    pandas/polars upgrade, T4c's null-detection logic will need
+    revisiting; these tests are the canary.
+    """
+
+    def test_sum_of_all_null_returns_zero_not_null(self, df_all_null):
+        # KEY FACT for T4c: sum on all-null → 0.0, not null. Indistinguishable
+        # from a real zero without a companion non-null count.
+        value = _scalar(wrap(df_all_null), "x", "sum")
+        assert not _is_null_scalar(value)
+        assert value == 0.0
+
+    def test_count_of_all_null_returns_zero(self, df_all_null):
+        # T4c uses this as the companion non-null-count signal:
+        # row_count > 0 AND count == 0 → all-null group → NULL.
+        value = _scalar(wrap(df_all_null), "x", "count")
+        assert value == 0
+
+    def test_mean_of_all_null_returns_null(self, df_all_null):
+        assert _is_null_scalar(_scalar(wrap(df_all_null), "x", "mean"))
+
+    def test_min_of_all_null_returns_null(self, df_all_null):
+        assert _is_null_scalar(_scalar(wrap(df_all_null), "x", "min"))
+
+    def test_max_of_all_null_returns_null(self, df_all_null):
+        assert _is_null_scalar(_scalar(wrap(df_all_null), "x", "max"))
+
+    def test_median_of_all_null_returns_null(self, df_all_null):
+        assert _is_null_scalar(_scalar(wrap(df_all_null), "x", "median"))
+
+
 class TestStatsOnSeven:
     def test_sum_seven(self, df_seven):
         assert _scalar(wrap(df_seven), "x", "sum") == 28.0

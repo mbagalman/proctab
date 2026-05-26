@@ -203,6 +203,31 @@ class TestParseValuesErrors:
         with pytest.raises(TypeError):
             _parse_tabulate_args(rows="region", values={"revenue": 42})
 
+    def test_duplicate_stat_within_metric_raises(self):
+        # Two identical (metric, stat) pairs would produce two col leaves
+        # with identical paths — violates the positional-path invariant
+        # before T5's axis construction even runs.
+        with pytest.raises(ValueError, match="duplicate"):
+            _parse_tabulate_args(
+                rows="region",
+                values={"revenue": ["sum", "sum"]},
+            )
+
+    def test_duplicate_stat_error_mentions_path_collision(self):
+        with pytest.raises(ValueError, match="same path"):
+            _parse_tabulate_args(
+                rows="region",
+                values={"revenue": ["sum", "sum"]},
+            )
+
+    def test_duplicate_stat_among_others_raises(self):
+        # mean appears twice in a longer list
+        with pytest.raises(ValueError, match="duplicate"):
+            _parse_tabulate_args(
+                rows="region",
+                values={"revenue": ["sum", "mean", "max", "mean"]},
+            )
+
 
 class TestParseSubtotals:
     def test_none_default(self):
@@ -257,6 +282,13 @@ class TestParseSubtotals:
             _parse_tabulate_args(
                 rows=["region", "product"], values={"r": "sum"},
                 subtotals=[42],
+            )
+
+    def test_duplicate_subtotal_names_raise(self):
+        with pytest.raises(ValueError, match="unique"):
+            _parse_tabulate_args(
+                rows=["region", "product"], values={"r": "sum"},
+                subtotals=["region", "region"],
             )
 
 
