@@ -279,9 +279,12 @@ class Table:
     def to_pandas(self):
         """Long-format pandas DataFrame export.
 
-        Schema: one column per row dim + one per col dim + `value`,
-        `missing_reason`, `_row_role`, `_col_role`, `_row_leaf_id`,
-        `_col_leaf_id`. See docs/TABLE_MODEL.md#dataframe-export.
+        Schema: one column per row dim + one per col dim + `_value`,
+        `_missing_reason`, `_row_role`, `_col_role`, `_row_leaf_id`,
+        `_col_leaf_id`. All fixed columns use a leading underscore
+        so user-supplied dim names like `value` don't collide. A dim
+        named after one of the reserved columns raises `ValueError`.
+        See docs/TABLE_MODEL.md#dataframe-export.
 
         Lazy-imports pandas so this method is only callable in
         environments that have it installed.

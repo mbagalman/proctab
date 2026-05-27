@@ -296,8 +296,8 @@ Columns:
 |----------------------------|----------------------------------------------------------------|
 | one per row dimension      | category value, or null if this row is a subtotal/total at that dim |
 | one per column dimension   | category value, or null if this column is a subtotal/total at that dim |
-| `value`                    | numeric cell value (null if missing)                           |
-| `missing_reason`           | `None \| "empty" \| "not_applicable" \| "suppressed" \| "null"` |
+| `_value`                   | numeric cell value (null if missing)                           |
+| `_missing_reason`          | `None \| "empty" \| "not_applicable" \| "suppressed" \| "null"` |
 | `_row_role`                | `"data" \| "subtotal" \| "total"` (role of this row's leaf node) |
 | `_col_role`                | `"data" \| "subtotal" \| "total"` (role of this column's leaf node) |
 | `_row_leaf_id`             | stable integer id from row tree's leaf ordering                |
@@ -306,6 +306,8 @@ Columns:
 **Two role columns are required.** A cell at the intersection of a subtotal row and a total column has `_row_role="subtotal"` and `_col_role="total"` — collapsing them would lose information.
 
 The leaf ids exist primarily for test fixtures and renderer debugging; normal users will ignore them.
+
+**Reserved column names.** All fixed columns use a leading underscore (`_value`, `_missing_reason`, `_row_role`, `_col_role`, `_row_leaf_id`, `_col_leaf_id`) so user-supplied dim names like `value`, `missing_reason`, or `id` don't silently collide at export time. A `Table` whose row or col dims include one of these reserved names raises `ValueError` from `to_pandas()` / `to_polars()` with a rename suggestion.
 
 This is intentionally long-format. Wide-format export adds complexity around column naming for nested headers; deferred to v0.2.
 

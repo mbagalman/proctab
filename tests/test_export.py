@@ -40,7 +40,7 @@ class TestSchema:
         cols = _build_long_format_columns(example_1_one_way_freq())
         assert list(cols.keys()) == [
             "region", "_stat",
-            "value", "missing_reason",
+            "_value", "_missing_reason",
             "_row_role", "_col_role",
             "_row_leaf_id", "_col_leaf_id",
         ]
@@ -50,7 +50,7 @@ class TestSchema:
         # row dim (region) + col dims (product_line, _stat) + 6 fixed
         assert list(cols.keys()) == [
             "region", "product_line", "_stat",
-            "value", "missing_reason",
+            "_value", "_missing_reason",
             "_row_role", "_col_role",
             "_row_leaf_id", "_col_leaf_id",
         ]
@@ -60,7 +60,7 @@ class TestSchema:
         # row dims (region, product) + col dims (quarter, _metric, _stat) + 6
         assert list(cols.keys()) == [
             "region", "product", "quarter", "_metric", "_stat",
-            "value", "missing_reason",
+            "_value", "_missing_reason",
             "_row_role", "_col_role",
             "_row_leaf_id", "_col_leaf_id",
         ]
@@ -178,21 +178,21 @@ class TestValueAndMissingReason:
 
     def test_present_cell_emits_value_and_null_reason(self):
         cols = _build_long_format_columns(self._present_table_with_missing())
-        assert cols["value"][0] == 42.0
-        assert cols["missing_reason"][0] is None
+        assert cols["_value"][0] == 42.0
+        assert cols["_missing_reason"][0] is None
 
     def test_empty_cell_emits_null_value_and_empty_reason(self):
         cols = _build_long_format_columns(self._present_table_with_missing())
-        assert cols["value"][1] is None
-        assert cols["missing_reason"][1] == "empty"
+        assert cols["_value"][1] is None
+        assert cols["_missing_reason"][1] == "empty"
 
     def test_not_applicable_reason_uses_underscored_spelling(self):
         cols = _build_long_format_columns(self._present_table_with_missing())
-        assert cols["missing_reason"][2] == "not_applicable"
+        assert cols["_missing_reason"][2] == "not_applicable"
 
     def test_suppressed_reason(self):
         cols = _build_long_format_columns(self._present_table_with_missing())
-        assert cols["missing_reason"][3] == "suppressed"
+        assert cols["_missing_reason"][3] == "suppressed"
 
     def test_null_reason(self):
         # The fixture's missing array doesn't cover NULL; build a variant
@@ -209,7 +209,7 @@ class TestValueAndMissingReason:
             formats=base.formats,
         )
         cols = _build_long_format_columns(table)
-        for r in cols["missing_reason"]:
+        for r in cols["_missing_reason"]:
             assert r == "null"
 
 
@@ -221,6 +221,101 @@ class TestLeafIds:
         n_cols = len(table.col_axis.leaves())
         assert set(cols["_row_leaf_id"]) == set(range(n_rows))
         assert set(cols["_col_leaf_id"]) == set(range(n_cols))
+
+
+# ---------------------------------------------------------------------------
+# Reserved-column collision guard.
+# ---------------------------------------------------------------------------
+
+
+def _table_with_row_dim_named(name: str) -> Table:
+    """Tiny 1-row × 1-col Table whose row dim has the given name."""
+    row_dim = Dimension(name=name, kind="category", categories=(Category("x"),))
+    col_dim = Dimension(name="c", kind="category", categories=(Category("a"),))
+    row_leaf = Node(path=(Category("x"),), depth=1, span=1, role="data")
+    row_tree = Node(path=(), depth=0, span=1, role="data", children=(row_leaf,))
+    col_leaf = Node(path=(Category("a"),), depth=1, span=1, role="data")
+    col_tree = Node(path=(), depth=0, span=1, role="data", children=(col_leaf,))
+    return Table(
+        row_axis=Axis(dims=(row_dim,), tree=row_tree),
+        col_axis=Axis(dims=(col_dim,), tree=col_tree),
+        body=np.array([[1.0]], dtype=np.float64),
+        missing=np.array([[int(MissingReason.PRESENT)]], dtype=np.uint8),
+        value_kinds=("raw",),
+        formats=(None,),
+    )
+
+
+class TestReservedColumnCollision:
+    """A dim whose name collides with a reserved column raises ValueError.
+
+    Reserved names are the fixed underscore-prefixed export columns:
+    `_value`, `_missing_reason`, `_row_role`, `_col_role`,
+    `_row_leaf_id`, `_col_leaf_id`.
+    """
+
+    @pytest.mark.parametrize(
+        "reserved",
+        [
+            "_value",
+            "_missing_reason",
+            "_row_role",
+            "_col_role",
+            "_row_leaf_id",
+            "_col_leaf_id",
+        ],
+    )
+    def test_row_dim_with_reserved_name_raises(self, reserved):
+        table = _table_with_row_dim_named(reserved)
+        with pytest.raises(ValueError, match="reserved"):
+            _build_long_format_columns(table)
+
+    def test_error_lists_offending_name(self):
+        table = _table_with_row_dim_named("_value")
+        with pytest.raises(ValueError, match=r"\['_value'\]"):
+            _build_long_format_columns(table)
+
+    def test_error_suggests_rename(self):
+        table = _table_with_row_dim_named("_value")
+        with pytest.raises(ValueError, match="Rename"):
+            _build_long_format_columns(table)
+
+    def test_to_pandas_surfaces_the_error(self):
+        pytest.importorskip("pandas")
+        table = _table_with_row_dim_named("_value")
+        with pytest.raises(ValueError, match="reserved"):
+            table.to_pandas()
+
+
+class TestReservedNamesDontCollideWithCommonUserColumns:
+    """The leading-underscore convention means common user column names
+    like `value`, `missing_reason`, `id` etc. can be used freely."""
+
+    def test_dim_named_value_does_not_collide(self):
+        # Reviewer's P1 regression case: a user column literally
+        # named "value" used to crash because it shared a list with
+        # the fixed `value` column. After the rename to `_value`, the
+        # user dim is safe.
+        pytest.importorskip("pandas")
+        table = _table_with_row_dim_named("value")
+        df = table.to_pandas()
+        # Two distinct columns coexist: user dim "value" + fixed "_value".
+        assert "value" in df.columns
+        assert "_value" in df.columns
+        # And the export ran to completion (the crash was at
+        # DataFrame construction with unequal-length columns).
+        assert len(df) == 1
+
+    @pytest.mark.parametrize(
+        "name",
+        ["value", "missing_reason", "row_role", "col_role", "id", "data"],
+    )
+    def test_common_user_dim_names_are_safe(self, name):
+        # None of these (no leading underscore) should trip the guard.
+        table = _table_with_row_dim_named(name)
+        cols = _build_long_format_columns(table)
+        assert name in cols
+        assert "_value" in cols
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +342,7 @@ class TestToPandas:
         df = example_1b_two_way_freq().to_pandas()
         assert list(df.columns) == [
             "region", "product_line", "_stat",
-            "value", "missing_reason",
+            "_value", "_missing_reason",
             "_row_role", "_col_role",
             "_row_leaf_id", "_col_leaf_id",
         ]
@@ -258,7 +353,7 @@ class TestToPandas:
         total = df[df["_row_role"] == "total"]
         # Total row × 4 stat columns = 4 rows; all have numeric value.
         assert len(total) == 4
-        for v in total["value"]:
+        for v in total["_value"]:
             assert v == v  # not NaN (would be NaN if missing was emitted as None)
 
     def test_subtotal_in_dim_column_is_null(self):
@@ -300,8 +395,8 @@ class TestToPolars:
         df_pd = table.to_pandas()
         df_pl = table.to_polars()
         # PRESENT cells should have the same float value in both engines.
-        pd_values = df_pd["value"].to_list()
-        pl_values = df_pl["value"].to_list()
+        pd_values = df_pd["_value"].to_list()
+        pl_values = df_pl["_value"].to_list()
         for a, b in zip(pd_values, pl_values):
             if a is None or a != a:  # NaN
                 assert b is None or (b != b)
