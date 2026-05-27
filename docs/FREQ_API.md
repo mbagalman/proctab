@@ -1,6 +1,6 @@
 # `freq()` — API Design Memo (v0.1)
 
-> Companion to [VISION.md](VISION.md) and [TABLE_MODEL.md](TABLE_MODEL.md). Goal: lock the user-facing argument shape and behavior of `freq()` before writing implementation code. Once locked, the proposed [Implementation Tickets](#implementation-tickets-proposed) migrate to [ROADMAP.md](ROADMAP.md).
+> Companion to [VISION.md](VISION.md) and [TABLE_MODEL.md](TABLE_MODEL.md). Goal: lock the user-facing argument shape and behavior of `freq()` before writing implementation code. Once locked, the proposed [Implementation Tickets](#implementation-tickets-proposed) migrate to [ROADMAP.md](../ROADMAP.md).
 
 ## Scope
 
@@ -11,7 +11,7 @@ What `freq()` does in v0.1:
 - Returns a [`Table`](TABLE_MODEL.md).
 - Accepts pandas or polars DataFrames as input (narwhals internally).
 
-What it does NOT do in v0.1 (deferred per [ROADMAP.md](ROADMAP.md)):
+What it does NOT do in v0.1 (deferred per [ROADMAP.md](../ROADMAP.md)):
 
 - Three-or-more-way tables — raise a clear error pointing to `tabulate()`.
 - Statistical tests (chi-square, Fisher's, Cramér's V). The `test=` kwarg is reserved but raises `NotImplementedError`.
@@ -162,7 +162,7 @@ These two cases plus their `totals=False`, `observed=False`, and `dropna=True` v
 
 ## Implementation Tickets (proposed)
 
-These migrate to [ROADMAP.md](ROADMAP.md#freq--one--and-two-way-frequency-tables) once this memo is locked. Each is one well-bounded coding session.
+These migrate to [ROADMAP.md](../ROADMAP.md#freq--one--and-two-way-frequency-tables) once this memo is locked. Each is one well-bounded coding session.
 
 1. **`FreqSpec` dataclass.** Internal representation of parsed user args (keys, totals, observed, dropna, levels, label, weight, test). All validation lives here.
 2. **`_parse_freq_args()`.** Function-args-to-`FreqSpec` parser with edge-case validation (key count, reserved kwargs, missing `levels=` when needed).

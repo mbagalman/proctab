@@ -4,7 +4,7 @@
 > and [FREQ_API.md](FREQ_API.md). Goal: lock the user-facing argument
 > shape and behavior of `tabulate()` before writing implementation
 > code. Once locked, the proposed [Implementation Tickets](#implementation-tickets-proposed)
-> migrate to [ROADMAP.md](ROADMAP.md).
+> migrate to [ROADMAP.md](../ROADMAP.md).
 
 ## Scope
 
@@ -21,7 +21,7 @@ What `tabulate()` does in v0.1:
 - Returns a [`Table`](TABLE_MODEL.md).
 - Accepts pandas or polars (eager) DataFrames as input.
 
-What it does NOT do in v0.1 (deferred per [ROADMAP.md](ROADMAP.md)):
+What it does NOT do in v0.1 (deferred per [ROADMAP.md](../ROADMAP.md)):
 
 - Three-or-more row or column dims — raises `ValueError` pointing to v0.2.
 - Weighted statistics — `weight=` reserved, raises `NotImplementedError`.
@@ -345,7 +345,7 @@ same but substitutes `mean` for the margin stat.
 
 ## Implementation Tickets (proposed)
 
-These migrate to [ROADMAP.md](ROADMAP.md) once this memo is locked.
+These migrate to [ROADMAP.md](../ROADMAP.md) once this memo is locked.
 
 1. **`TabSpec` dataclass.** Internal parsed-args representation (rows,
    cols, values_spec [as ordered list of (metric, stat) pairs after

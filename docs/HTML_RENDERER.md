@@ -5,7 +5,7 @@
 > renderer's structure, styling approach, and API surface before
 > implementation. Once locked, the proposed
 > [Implementation Tickets](#implementation-tickets-proposed) migrate to
-> [ROADMAP.md](ROADMAP.md).
+> [ROADMAP.md](../ROADMAP.md).
 
 ## Scope
 
@@ -30,7 +30,7 @@ What the v0.1 HTML renderer does:
 - Match the text renderer's MissingReason display rules exactly so the
   two renderers stay consistent.
 
-What it does NOT do in v0.1 (deferred per [ROADMAP.md](ROADMAP.md)):
+What it does NOT do in v0.1 (deferred per [ROADMAP.md](../ROADMAP.md)):
 
 - Multiple style themes / CSS customization API.
 - Interactive features (sorting, filtering, drill-down).
