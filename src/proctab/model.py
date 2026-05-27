@@ -276,6 +276,30 @@ class Table:
         from proctab.render.html import render_html
         return render_html(self, standalone=False)
 
+    def to_pandas(self):
+        """Long-format pandas DataFrame export.
+
+        Schema: one column per row dim + one per col dim + `value`,
+        `missing_reason`, `_row_role`, `_col_role`, `_row_leaf_id`,
+        `_col_leaf_id`. See docs/TABLE_MODEL.md#dataframe-export.
+
+        Lazy-imports pandas so this method is only callable in
+        environments that have it installed.
+        """
+        import pandas as pd
+
+        from proctab._export import _build_long_format_columns
+
+        return pd.DataFrame(_build_long_format_columns(self))
+
+    def to_polars(self):
+        """Long-format polars DataFrame export. Same schema as `to_pandas`."""
+        import polars as pl
+
+        from proctab._export import _build_long_format_columns
+
+        return pl.DataFrame(_build_long_format_columns(self))
+
     def to_html(
         self, path: str | os.PathLike[str] | None = None
     ) -> str | None:
