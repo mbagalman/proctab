@@ -1,4 +1,4 @@
-"""Tests for the HTML renderer (H1 + H2 + H3 + H4).
+"""Tests for the HTML renderer (H1 + H2 + H3 + H4 + H5).
 
 Contract source: docs/HTML_RENDERER.md.
 
@@ -31,7 +31,15 @@ from proctab.model import (
     Table,
     TotalMarker,
 )
-from proctab.render.html import _cell_role, _resolve_format, render_html
+from proctab.render.html import (
+    _build_css,
+    _cell_role,
+    _inline_styles_for,
+    _no_styles,
+    _resolve_format,
+    _STYLE_BY_CLASS,
+    render_html,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -963,3 +971,179 @@ class TestRenderHtmlMetaIntegration:
         children = list(self.root)
         tags = [c.tag for c in children]
         assert tags.index("tbody") < tags.index("tfoot")
+
+
+# ---------------------------------------------------------------------------
+# H5 — Default theme: inline-style emission (fragment) vs class-only
+# (standalone), with `_build_css()` producing the same declarations both
+# modes consume.
+# ---------------------------------------------------------------------------
+
+
+def _all_elements(root: ET.Element) -> list[ET.Element]:
+    """Recursively gather every element under (and including) `root`."""
+    out = [root]
+    for child in root:
+        out.extend(_all_elements(child))
+    return out
+
+
+class TestStyleResolvers:
+    """Unit tests for the two StyleResolver callables."""
+
+    def test_no_styles_returns_empty_for_any_classes(self):
+        assert _no_styles([]) == ""
+        assert _no_styles(["proctab-cell"]) == ""
+        assert _no_styles(["proctab-total", "proctab-cell"]) == ""
+
+    def test_inline_for_unknown_class_returns_empty(self):
+        assert _inline_styles_for(["not-a-real-class"]) == ""
+
+    def test_inline_for_empty_rule_class_returns_empty(self):
+        # proctab-data has an empty declaration in v0.1.
+        assert _inline_styles_for(["proctab-data"]) == ""
+
+    def test_inline_emits_style_attribute_with_quotes(self):
+        out = _inline_styles_for(["proctab-cell"])
+        assert out.startswith(' style="')
+        assert out.endswith('"')
+
+    def test_inline_uses_attribute_escaping(self):
+        # Font stack contains single quotes; they should be attr-escaped.
+        out = _inline_styles_for(["proctab"])
+        assert "'" not in out
+        assert "&#x27;" in out
+
+    def test_inline_concatenates_in_style_by_class_order(self):
+        # Order in _STYLE_BY_CLASS is "proctab-cell" before "proctab-total".
+        # Caller order ('total' before 'cell') should not change emit order.
+        out = _inline_styles_for(["proctab-total", "proctab-cell"])
+        cell_pos = out.find("font-variant-numeric")
+        total_pos = out.find("font-weight: bold")
+        assert 0 < cell_pos < total_pos
+
+
+class TestFragmentInlineStyles:
+    """Fragment mode emits `style="..."` on every classed element with rules."""
+
+    def setup_method(self):
+        self.root = _parse(render_html(example_5_customized()))
+
+    def test_table_has_inline_style(self):
+        assert "border-collapse: collapse" in (self.root.get("style") or "")
+
+    def test_caption_has_inline_style(self):
+        cap = self.root.find("caption")
+        assert cap is not None
+        assert "caption-side: top" in (cap.get("style") or "")
+
+    def test_col_headers_have_inline_style(self):
+        for th in self.root.find("thead").iter("th"):
+            cls = th.get("class") or ""
+            if "proctab-col-data" in cls or "proctab-col-total" in cls:
+                assert th.get("style") is not None, (
+                    f"col header {cls!r} missing style"
+                )
+
+    def test_corner_has_no_style_when_class_has_empty_rule(self):
+        corner = _corner(self.root)
+        assert corner.get("style") is None
+
+    def test_body_cells_have_inline_style(self):
+        for tr in _tbody_rows(self.root):
+            for td in tr.findall("td"):
+                cls = td.get("class") or ""
+                # proctab-group-pad has no rule → no style; everything else does.
+                if "proctab-group-pad" in cls:
+                    continue
+                assert td.get("style") is not None, (
+                    f"<td class={cls!r}> missing style"
+                )
+
+    def test_total_row_cells_carry_bold(self):
+        # example_1_one_way_freq ends with a Total row.
+        root = _parse(render_html(example_1_one_way_freq()))
+        total_row = [
+            r for r in _tbody_rows(root)
+            if (r.get("class") or "") == "proctab-total"
+        ]
+        assert total_row, "fixture should have a total row"
+        for td in total_row[-1].findall("td"):
+            style = td.get("style") or ""
+            assert "font-weight: bold" in style
+
+    def test_tfoot_rows_have_inline_style(self):
+        tfoot = self.root.find("tfoot")
+        for tr in tfoot.findall("tr"):
+            assert tr.get("style") is not None
+
+
+class TestStandaloneClassOnly:
+    """Standalone mode emits classes only — no inline `style="..."`."""
+
+    def setup_method(self):
+        self.root = _parse(render_html(example_5_customized(), standalone=True))
+
+    def test_no_element_has_style_attribute(self):
+        for el in _all_elements(self.root):
+            assert el.get("style") is None, (
+                f"<{el.tag} class={el.get('class')!r}> has unexpected style"
+            )
+
+    def test_classes_still_present(self):
+        # Standalone mode keeps the full class hierarchy — H6's <style>
+        # block will style by class. Spot-check a few.
+        assert self.root.get("class") == "proctab"
+        caption = self.root.find("caption")
+        assert caption.get("class") == "proctab-caption"
+
+    def test_data_value_still_emitted(self):
+        # data-value is a structural data attribute, not styling.
+        for tr in _tbody_rows(self.root):
+            for td in tr.findall("td"):
+                cls = td.get("class") or ""
+                if "proctab-group-pad" in cls or "proctab-missing-" in cls:
+                    continue
+                assert td.get("data-value") is not None
+
+
+class TestBuildCss:
+    """`_build_css()` produces the standalone-mode stylesheet content."""
+
+    def test_starts_with_table_selector(self):
+        css = _build_css()
+        assert css.splitlines()[0].startswith("table.proctab {")
+
+    def test_contains_one_rule_per_nonempty_class(self):
+        css = _build_css()
+        expected_rules = sum(1 for v in _STYLE_BY_CLASS.values() if v)
+        actual_rules = css.count(" { ")
+        assert actual_rules == expected_rules
+
+    def test_uses_prefixed_dotted_selectors(self):
+        css = _build_css()
+        # Every non-`table.proctab` selector starts with `.proctab-`.
+        for line in css.splitlines():
+            sel = line.split(" {")[0]
+            assert sel == "table.proctab" or sel.startswith(".proctab-")
+
+    def test_contains_expected_role_rules(self):
+        css = _build_css()
+        # The locked memo requires total emphasis + subtotal italic.
+        assert ".proctab-total { font-weight: bold;" in css
+        assert ".proctab-subtotal { font-style: italic;" in css
+
+    def test_contains_tabular_nums_on_cells(self):
+        # Memo: tabular numerals for cell values.
+        css = _build_css()
+        assert "font-variant-numeric: tabular-nums" in css
+
+    def test_shares_declarations_with_inline_resolver(self):
+        # Pick a class with a non-empty rule and verify the declaration
+        # text appears verbatim in both _build_css() and _inline_styles_for.
+        cls = "proctab-cell"
+        decl = _STYLE_BY_CLASS[cls]
+        css = _build_css()
+        assert decl in css
+        inline = _inline_styles_for([cls])
+        assert decl in inline
