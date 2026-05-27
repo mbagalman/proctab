@@ -5,6 +5,7 @@ design memo this implements.
 """
 
 from legible.freq import freq
+from legible.tabulate import tabulate
 from legible.model import (
     Axis,
     Category,
@@ -38,4 +39,5 @@ __all__ = [
     "ValueKind",
     "freq",
     "render_text",
+    "tabulate",
 ]

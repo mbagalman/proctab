@@ -1,10 +1,14 @@
 """`tabulate()` — multi-dimensional summary tables. See TABULATE_API.md for design.
 
-Currently exposes (internal pipeline; public `tabulate()` arrives in T6):
-- `SUPPORTED_STATS`: the v0.1 stat name set.
-- `STAT_EXPRS` (T3): stat name → narwhals expression callable.
-- `TabSpec` (T1): parsed-and-validated arg representation.
-- `_parse_tabulate_args()` (T2): user args → TabSpec.
+Public entry point: `tabulate(data, *, rows, cols, values, ...)`.
+
+Internal pipeline (also importable for testing):
+- `SUPPORTED_STATS`, `STAT_EXPRS`, `STAT_DEFAULTS`: per-stat registries.
+- `TabSpec` (T1) + `_parse_tabulate_args()` (T2): parsed args.
+- `aggregate_data_cells()` (T4a): per-group stat values + companion signals.
+- `aggregate_totals()` (T4b): subtotal + grand-total sections from source.
+- `assemble_body()` (T4c): final body + missing matrices + leaf layouts.
+- `build_tabulate_axes()` (T5): row + col Axes with metadata.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ import narwhals.stable.v1 as nw
 import numpy as np
 
 from legible._categories import is_null, normalize, resolve_categories
+from legible._engine import wrap
 from legible.model import (
     Axis,
     Category,
@@ -24,6 +29,7 @@ from legible.model import (
     MissingReason,
     Node,
     SubtotalMarker,
+    Table,
     TotalMarker,
     ValueKind,
 )
@@ -1263,3 +1269,109 @@ def _per_col_leaf_metadata(
         value_kinds.append(vk)
         formats.append(fmt)
     return tuple(value_kinds), tuple(formats)
+
+
+# === T6: public API ========================================================
+
+
+def tabulate(
+    data: Any,
+    *,
+    rows: str | Sequence[str],
+    cols: str | Sequence[str] = (),
+    values: Mapping[str, str | Sequence[str]],
+    subtotals: str | Sequence[str] | None = None,
+    totals: bool = True,
+    observed: bool = True,
+    dropna: bool = False,
+    levels: Mapping[str, Sequence[Any]] | None = None,
+    label: Mapping[str, str] | None = None,
+    weight: Mapping[str, str] | None = None,
+    test: str | None = None,
+) -> Table:
+    """Multi-dimensional summary table from a pandas or polars DataFrame.
+
+    See TABULATE_API.md for the full v0.1 design. Composes the T1–T5
+    internal pipeline; no business logic of its own.
+
+    Args:
+        data: A pandas or polars (eager) DataFrame.
+        rows: Required. One or two row-dim column names. Single string or
+            list/tuple. Mixing forms raises TypeError.
+        cols: Zero or one column-dim name. Default `()` (no column dim;
+            the col axis has just `_metric` + `_stat`).
+        values: Required. `{metric_column: stat_name}` or
+            `{metric_column: [stat_name, ...]}`. Stat names from the
+            v0.1 set: sum, mean, count, min, max, median.
+        subtotals: Optional row-dim name(s) at which to insert subtotal
+            rows. Must be a subset of `rows`; the innermost row dim is
+            rejected (would tautologically duplicate leaf rows).
+        totals: If True (default), include grand total row when row
+            leaves exist, and grand total column when `cols` is
+            non-empty.
+        observed: If True (default), only categories appearing in the
+            data become leaves. If False, the full domain must come
+            from `levels=`.
+        dropna: If True, drop rows with null values in any grouping
+            column. If False (default), nulls become a synthetic
+            "Missing" category appended last.
+        levels: Optional per-key override of category order or domain.
+            Required for `observed=False`.
+        label: Optional display-name overrides for dim columns.
+        weight: RESERVED for weighted statistics in v0.2; raises
+            NotImplementedError if non-None.
+        test: RESERVED for statistical tests in v0.2; raises
+            NotImplementedError if non-None.
+
+    Returns:
+        A `Table` with the row Axis built from `rows`, the column Axis
+        carrying `_metric` and `_stat` synthetic dims (preceded by the
+        user col dim if `cols` is non-empty), the computed body matrix,
+        and per-col-leaf value_kinds + formats.
+
+    Raises:
+        ValueError: invalid argument combinations (no rows, too many
+            row/col dims, duplicate keys, innermost-dim subtotal, etc.).
+        TypeError: bad key forms or non-DataFrame input.
+        KeyError: a named row/col/metric column is not present in `data`.
+        NotImplementedError: `weight=` or `test=` supplied (v0.2).
+
+    Example:
+        >>> import pandas as pd
+        >>> import legible as lg
+        >>> df = pd.DataFrame({
+        ...     "region": ["W", "W", "E", "E"],
+        ...     "revenue": [100.0, 80.0, 90.0, 70.0],
+        ... })
+        >>> table = lg.tabulate(df, rows="region", values={"revenue": "sum"})
+        >>> print(table.to_text())  # doctest: +SKIP
+    """
+    spec = _parse_tabulate_args(
+        rows=rows, cols=cols, values=values,
+        subtotals=subtotals, totals=totals,
+        observed=observed, dropna=dropna,
+        levels=levels, label=label,
+        weight=weight, test=test,
+    )
+
+    # Metrics must be present in the DataFrame too — pre-check via wrap()
+    # so a missing metric column surfaces as a clear KeyError before
+    # narwhals fails inside the aggregation expression.
+    metric_names = tuple(dict.fromkeys(m for m, _ in spec.values_spec))
+    required = tuple(spec.rows) + tuple(spec.cols) + metric_names
+
+    nw_df = wrap(data, required_columns=required)
+
+    data_result = aggregate_data_cells(nw_df, spec)
+    totals_result = aggregate_totals(nw_df, spec, data_result)
+    assembled = assemble_body(data_result, totals_result, spec)
+    axes = build_tabulate_axes(data_result, spec)
+
+    return Table(
+        row_axis=axes.row_axis,
+        col_axis=axes.col_axis,
+        body=assembled.body,
+        missing=assembled.missing,
+        value_kinds=axes.value_kinds,
+        formats=axes.formats,
+    )

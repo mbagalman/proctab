@@ -9,7 +9,7 @@ The bare data model and a renderer that proves it works. No aggregation yet.
 - [x] Data containers: `Table`, `Axis`, `Dimension`, `Node`, `Category`, `Marker`, `MissingReason`, `ValueKind`
 - [x] Hand-built tables for the four worked examples in [VISION.md](VISION.md) (`src/legible/examples.py`)
 - [x] Plain-text renderer (`src/legible/render/text.py`)
-- [x] Initial test suite (612 passing — pandas/polars exercised from F3 onward)
+- [x] Initial test suite (664 passing — pandas/polars exercised from F3 onward)
 - [x] Hardened `Axis.validate()`: full-tree walk; span correctness; `len(path) == depth` consistency; malformed-branch-path detection
 - [ ] CI: GitHub Actions running lint + test on Python 3.10–3.14
 - [ ] Choose final project name (currently using `legible` as a working name)
@@ -41,7 +41,7 @@ First release someone might actually try. Each feature gets a design memo before
 - [x] **T4b.** Aggregation kernel — subtotals + grand total: additional groupby passes (one per subtotal level + one for grand total) computed FROM SOURCE (not by summing leaf cells; required for non-additive stats like mean/median)
 - [x] **T4c.** Aggregation kernel — `MissingReason` assignment using BOTH companion signals (row count per group + non-null count per `(group, metric)`) so `EMPTY` (no source records) is distinguished from `NULL` (records exist but metric all-null). Without this, `sum` on an all-null group looks like a real zero.
 - [x] **T5.** Axis construction — multi-dim row tree with subtotal/total marker leaves; multi-dim col tree with sparse `(metric, stat)` leaves under each user col category; calls `Axis.validate()` on output
-- [ ] **T6.** Public `tabulate()` — wire spec → wrap → aggregate → axes → Table
+- [x] **T6.** Public `tabulate()` — wire spec → wrap → aggregate → axes → Table
 - [ ] **T7.** Integration tests against a new `example_2_tabulate_v01()` fixture (structurally identical to existing `example_2_tabulate` but substituting `mean` for `weighted_mean` on margin; original stays as "future target"); pandas + polars
 - [ ] **T8.** Edge-case tests — dim caps (3+ rows, 2+ cols), unknown stat name, empty `values`, innermost-dim subtotal, reserved kwargs, empty df, null grouping cols + dropna both ways, `observed=False` + `levels=`, all-null value column (verifies the `NULL` vs `EMPTY` distinction)
 
