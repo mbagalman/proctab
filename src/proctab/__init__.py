@@ -1,7 +1,7 @@
 """proctab — executive-ready summary tables and crosstabs.
 
-v0.0.1 data-model layer. See TABLE_MODEL.md in the project root for the
-design memo this implements.
+v0.0.1 data-model layer. See docs/TABLE_MODEL.md for the design memo
+this implements.
 """
 
 from proctab.freq import freq

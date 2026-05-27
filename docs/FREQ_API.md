@@ -62,7 +62,7 @@ A `Table` whose:
 - `body` holds counts and percentages as floats.
 - `value_kinds` / `formats` set per-col-leaf (N → count, percent stats → percent).
 
-The exact shape is identical to the hand-built fixtures in [`examples.py`](src/proctab/examples.py) — see [Worked Examples](#worked-examples) below.
+The exact shape is identical to the hand-built fixtures in [`examples.py`](../src/proctab/examples.py) — see [Worked Examples](#worked-examples) below.
 
 ## Default Statistic Set
 
@@ -93,7 +93,7 @@ Direct application of the policy in [TABLE_MODEL.md#null-handling-policy-v01](TA
 
 ## `observed=True/False`
 
-Per-dim flag on [`Dimension`](src/proctab/model.py); in v0.1, the function kwarg applies it globally to all dims.
+Per-dim flag on [`Dimension`](../src/proctab/model.py); in v0.1, the function kwarg applies it globally to all dims.
 
 - `observed=True` (default) — only categories that appear in source data become leaves.
 - `observed=False` — full domain from `levels=` argument (if provided) or from a pandas `Categorical` / polars `Enum` dtype's defined values. Categories with no source rows produce leaves with `MissingReason.EMPTY` cells.
@@ -109,7 +109,7 @@ df = pd.DataFrame({"region": ["W","W","E","E","E","S","N"]})
 pt.freq(df, "region")
 ```
 
-Returns the structure of [`examples.example_1_one_way_freq`](src/proctab/examples.py):
+Returns the structure of [`examples.example_1_one_way_freq`](../src/proctab/examples.py):
 
 - `row_axis`: `region` with 4 data categories + Total row (5 row leaves)
 - `col_axis`: `_stat` with N / Pct / CumN / CumPct (4 col leaves)
@@ -122,7 +122,7 @@ df = pd.DataFrame({"region": [...], "product_line": [...]})
 pt.freq(df, "region", "product_line")
 ```
 
-Returns the structure of [`examples.example_1b_two_way_freq`](src/proctab/examples.py):
+Returns the structure of [`examples.example_1b_two_way_freq`](../src/proctab/examples.py):
 
 - `row_axis`: `region` with 3 data categories + Total row (4 row leaves)
 - `col_axis`: `product_line` (2 cats + TotalMarker) × `_stat` (N / Row% / Col% / Tot%) → 12 col leaves

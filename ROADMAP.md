@@ -12,7 +12,7 @@ The bare data model and a renderer that proves it works. No aggregation yet.
 - [x] Initial test suite (733 passing — pandas/polars exercised from F3 onward)
 - [x] Hardened `Axis.validate()`: full-tree walk; span correctness; `len(path) == depth` consistency; malformed-branch-path detection
 - [ ] CI: GitHub Actions running lint + test on Python 3.10–3.14
-- [ ] Choose final project name (currently using `proctab` as a working name)
+- [x] Choose final project name — locked: `proctab`
 
 ## v0.1 — Minimum Lovable Release
 

@@ -228,7 +228,7 @@ pt.tabulate(
 
 ### Example C — the full Example 2 from VISION
 
-The hand-built [example_2_tabulate](src/proctab/examples.py) fixture
+The hand-built [example_2_tabulate](../src/proctab/examples.py) fixture
 shows the target structure for:
 
 ```python
@@ -250,7 +250,7 @@ pt.tabulate(
 - Body shape: `(2 regions × 2 products + 2 subtotals + 1 grand total,
   4 quarters × 3 stat-leaves + 1 Total col × 3) = (7, 15)`.
 
-**On the fixture:** the existing [example_2_tabulate](src/proctab/examples.py)
+**On the fixture:** the existing [example_2_tabulate](../src/proctab/examples.py)
 uses `weighted_mean`, which v0.1 doesn't support. Don't mutate that
 fixture — keep it as the "future target" the VISION promised. The
 tabulate integration tests (T7) will use a separate v0.1-clean
