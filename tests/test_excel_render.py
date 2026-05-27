@@ -378,10 +378,16 @@ class TestTheadOneDim:
         _, _, hs = _layout_for(example_1_one_way_freq())
         assert ws.cell(row=hs, column=1).value is None
 
-    def test_no_merged_ranges(self, tmp_path: pathlib.Path):
-        # Single-dim col axis — innermost depth, each leaf is one cell.
+    def test_no_header_row_merged_ranges(self, tmp_path: pathlib.Path):
+        # Single-dim col axis → innermost depth, each leaf is one cell.
+        # The only merge in this fixture is the title row (E4).
         ws = _render_and_load(example_1_one_way_freq(), tmp_path)
-        assert _merged_ranges(ws) == set()
+        _, _, hs = _layout_for(example_1_one_way_freq())
+        header_merges = [
+            str(r) for r in ws.merged_cells.ranges
+            if f":{hs}" in str(r) or f"{hs}:" in str(r)
+        ]
+        assert header_merges == []
 
 
 class TestTheadTwoDim:
@@ -421,12 +427,15 @@ class TestTheadTwoDim:
         assert inner_labels == ["N", "Row%", "Col%", "Tot%"] * 3
 
     def test_inner_row_has_no_merges(self, tmp_path: pathlib.Path):
-        # Innermost depth → each leaf is one cell; only outer-row merges
-        # exist (the 3 from the previous test).
+        # Innermost depth → each leaf is one cell. Allowed merges:
+        # the title row (row 1) and the 3 outer-header-row merges.
         ws = _render_and_load(example_1b_two_way_freq(), tmp_path)
         _, _, hs = _layout_for(example_1b_two_way_freq())
+        inner_row = hs + 1
         for r in _merged_ranges(ws):
-            assert f":{hs}" in r or f"{hs}:" in r  # only the outer row
+            assert not (f":{inner_row}" in r or f"{inner_row}:" in r), (
+                f"inner header row should have no merges, found {r}"
+            )
 
     def test_corner_cells_blank(self, tmp_path: pathlib.Path):
         ws = _render_and_load(example_1b_two_way_freq(), tmp_path)
@@ -496,10 +505,10 @@ class TestTheadWithTitle:
         assert title_present is True
         assert hs == 3
         ws = _render_and_load(example_5_customized(), tmp_path)
-        # Title is E4; for now, rows 1 + 2 stay blank.
-        assert ws.cell(row=1, column=1).value is None
+        # Title now occupies row 1; row 2 stays blank (spacer); headers
+        # start at row 3.
+        assert ws.cell(row=1, column=1).value == "Net Revenue by Region"
         assert ws.cell(row=2, column=1).value is None
-        # Headers start at row 3.
         assert ws.cell(row=3, column=2).value == "Q1"
 
 
@@ -845,3 +854,282 @@ class TestTbodyValueKindFormats:
         # First currency cell should be numeric (not text-formatted).
         v = ws.cell(row=bs, column=2).value
         assert isinstance(v, (int, float))
+
+
+# ---------------------------------------------------------------------------
+# E4 — title + source + footnotes.
+# ---------------------------------------------------------------------------
+
+
+def _body_end(table) -> int:
+    """Last body row number that `_write_tbody` would write to.
+
+    Empty col-axis tables return body_start - 1 (no body rows).
+    """
+    from proctab.render.excel import _walk_nonroot
+    bs = _body_start(table)
+    if len(table.col_axis.leaves()) == 0:
+        return bs - 1
+    n_body_rows = sum(1 for _ in _walk_nonroot(table.row_axis.tree))
+    return bs + n_body_rows - 1
+
+
+def _table_with_meta_at_top(base_meta: dict, base_table=None):
+    """Tiny 1-row × 1-col Table with the given meta dict."""
+    from proctab.model import Axis, Category, Dimension, Node, Table
+
+    base_row_dim = Dimension(
+        name="region", kind="category", categories=(Category("W"),)
+    )
+    row_leaf = Node(path=(Category("W"),), depth=1, span=1, role="data")
+    row_tree = Node(
+        path=(), depth=0, span=1, role="data", children=(row_leaf,)
+    )
+    base_col_dim = Dimension(
+        name="c", kind="category", categories=(Category("x"),)
+    )
+    col_leaf = Node(path=(Category("x"),), depth=1, span=1, role="data")
+    col_tree = Node(
+        path=(), depth=0, span=1, role="data", children=(col_leaf,)
+    )
+    return Table(
+        row_axis=Axis(dims=(base_row_dim,), tree=row_tree),
+        col_axis=Axis(dims=(base_col_dim,), tree=col_tree),
+        body=np.array([[1.0]], dtype=np.float64),
+        missing=np.array([[0]], dtype=np.uint8),
+        value_kinds=("raw",),
+        formats=(None,),
+        meta=base_meta,
+    )
+
+
+class TestTitleRendering:
+    """meta.title → bold +2pt cell at A1 merged across body columns."""
+
+    def test_no_title_means_row_1_blank(self, tmp_path: pathlib.Path):
+        ws = _render_and_load(
+            _table_with_meta_at_top({}), tmp_path
+        )
+        assert ws.cell(row=1, column=1).value is None
+
+    def test_title_text_at_a1(self, tmp_path: pathlib.Path):
+        ws = _render_and_load(
+            _table_with_meta_at_top({"title": "My Report"}), tmp_path
+        )
+        assert ws.cell(row=1, column=1).value == "My Report"
+
+    def test_title_bold_and_size_13(self, tmp_path: pathlib.Path):
+        ws = _render_and_load(
+            _table_with_meta_at_top({"title": "X"}), tmp_path
+        )
+        cell = ws.cell(row=1, column=1)
+        assert cell.font.bold is True
+        assert cell.font.size == 13
+
+    def test_title_left_aligned(self, tmp_path: pathlib.Path):
+        ws = _render_and_load(
+            _table_with_meta_at_top({"title": "X"}), tmp_path
+        )
+        assert ws.cell(row=1, column=1).alignment.horizontal == "left"
+
+    def test_title_merged_across_body_columns(self, tmp_path: pathlib.Path):
+        # Use example_5_customized: 4 col leaves → merge A1:E1.
+        ws = _render_and_load(example_5_customized(), tmp_path)
+        ranges = {str(r) for r in ws.merged_cells.ranges}
+        assert "A1:E1" in ranges
+
+    def test_title_not_merged_when_empty_col_axis(
+        self, tmp_path: pathlib.Path
+    ):
+        # 0-col-leaf table → end_col == 1 → no merge applied (would be
+        # an A1:A1 no-op merge, which we explicitly guard against).
+        from proctab.model import Axis, Category, Dimension, Node, Table
+
+        row_dim = Dimension(
+            name="region", kind="category", categories=(Category("W"),)
+        )
+        row_leaf = Node(path=(Category("W"),), depth=1, span=1, role="data")
+        row_tree = Node(
+            path=(), depth=0, span=1, role="data", children=(row_leaf,)
+        )
+        empty_col_dim = Dimension(
+            name="c", kind="category", categories=()
+        )
+        empty_col_tree = Node(
+            path=(), depth=0, span=0, role="data", children=()
+        )
+        table = Table(
+            row_axis=Axis(dims=(row_dim,), tree=row_tree),
+            col_axis=Axis(dims=(empty_col_dim,), tree=empty_col_tree),
+            body=np.empty((1, 0), dtype=np.float64),
+            missing=np.empty((1, 0), dtype=np.uint8),
+            value_kinds=(),
+            formats=(),
+            meta={"title": "X"},
+        )
+        ws = _render_and_load(table, tmp_path)
+        # Title text still appears at A1.
+        assert ws.cell(row=1, column=1).value == "X"
+        # But no merge spans A1.
+        title_merges = [
+            str(r) for r in ws.merged_cells.ranges
+            if str(r).startswith("A1:")
+        ]
+        assert title_merges == []
+
+    def test_empty_meta_means_no_title(self, tmp_path: pathlib.Path):
+        ws = _render_and_load(
+            _table_with_meta_at_top({}), tmp_path
+        )
+        assert ws.cell(row=1, column=1).value is None
+
+    def test_empty_string_title_skipped(self, tmp_path: pathlib.Path):
+        ws = _render_and_load(
+            _table_with_meta_at_top({"title": ""}), tmp_path
+        )
+        assert ws.cell(row=1, column=1).value is None
+
+
+class TestTfootSource:
+    """meta.source → 'Source: ...' row at body_end + 2, merged, wrap,
+    italic, smaller font, thin top border."""
+
+    def test_no_meta_means_no_tfoot(self, tmp_path: pathlib.Path):
+        table = _table_with_meta_at_top({})
+        ws = _render_and_load(table, tmp_path)
+        for r in range(_body_end(table) + 1, _body_end(table) + 5):
+            assert ws.cell(row=r, column=1).value is None
+
+    def test_source_text_with_prefix(self, tmp_path: pathlib.Path):
+        table = _table_with_meta_at_top({"source": "Internal CRM"})
+        ws = _render_and_load(table, tmp_path)
+        row = _body_end(table) + 2
+        assert ws.cell(row=row, column=1).value == "Source: Internal CRM"
+
+    def test_source_styling(self, tmp_path: pathlib.Path):
+        table = _table_with_meta_at_top({"source": "S"})
+        ws = _render_and_load(table, tmp_path)
+        cell = ws.cell(row=_body_end(table) + 2, column=1)
+        assert cell.font.italic is True
+        assert cell.font.size == 10
+        assert cell.alignment.wrap_text is True
+        assert cell.alignment.horizontal == "left"
+        assert cell.border.top.style == "thin"
+
+    def test_source_merged_across_body_columns(
+        self, tmp_path: pathlib.Path
+    ):
+        # example_5_customized has source + 4 col leaves → merge A..E
+        ws = _render_and_load(example_5_customized(), tmp_path)
+        bs = _body_start(example_5_customized())
+        be = _body_end(example_5_customized())
+        ranges = {str(r) for r in ws.merged_cells.ranges}
+        assert f"A{be + 2}:E{be + 2}" in ranges
+
+    def test_source_blank_spacer_row_between_body_and_source(
+        self, tmp_path: pathlib.Path
+    ):
+        table = _table_with_meta_at_top({"source": "S"})
+        ws = _render_and_load(table, tmp_path)
+        be = _body_end(table)
+        # body_end + 1 is the blank spacer.
+        assert ws.cell(row=be + 1, column=1).value is None
+
+
+class TestTfootFootnotes:
+    """meta.footnotes → one row each from body_end + 3 onwards, merged,
+    wrap, italic + smaller. Only the first tfoot row carries the top
+    border; when source is present that's source, else the first footnote."""
+
+    def test_one_footnote_only_at_body_end_plus_2(
+        self, tmp_path: pathlib.Path
+    ):
+        # No source: first footnote starts at body_end + 2 and gets
+        # the top border.
+        table = _table_with_meta_at_top({"footnotes": ["note"]})
+        ws = _render_and_load(table, tmp_path)
+        be = _body_end(table)
+        cell = ws.cell(row=be + 2, column=1)
+        assert cell.value == "note"
+        assert cell.border.top.style == "thin"
+        assert cell.font.italic is True
+        assert cell.font.size == 10
+
+    def test_multiple_footnotes_in_order(self, tmp_path: pathlib.Path):
+        table = _table_with_meta_at_top(
+            {"footnotes": ["fn1", "fn2", "fn3"]}
+        )
+        ws = _render_and_load(table, tmp_path)
+        be = _body_end(table)
+        assert ws.cell(row=be + 2, column=1).value == "fn1"
+        assert ws.cell(row=be + 3, column=1).value == "fn2"
+        assert ws.cell(row=be + 4, column=1).value == "fn3"
+
+    def test_only_first_footnote_has_top_border_when_no_source(
+        self, tmp_path: pathlib.Path
+    ):
+        table = _table_with_meta_at_top(
+            {"footnotes": ["fn1", "fn2", "fn3"]}
+        )
+        ws = _render_and_load(table, tmp_path)
+        be = _body_end(table)
+        assert ws.cell(row=be + 2, column=1).border.top.style == "thin"
+        assert ws.cell(row=be + 3, column=1).border.top.style is None
+        assert ws.cell(row=be + 4, column=1).border.top.style is None
+
+
+class TestTfootSourceAndFootnotes:
+    """Both present: source first (with top border), then footnotes
+    (no top border on any)."""
+
+    def setup_method(self):
+        self.table = _table_with_meta_at_top(
+            {"source": "src", "footnotes": ["fn1", "fn2"]}
+        )
+
+    def test_order_source_then_footnotes(self, tmp_path: pathlib.Path):
+        ws = _render_and_load(self.table, tmp_path)
+        be = _body_end(self.table)
+        assert ws.cell(row=be + 2, column=1).value == "Source: src"
+        assert ws.cell(row=be + 3, column=1).value == "fn1"
+        assert ws.cell(row=be + 4, column=1).value == "fn2"
+
+    def test_only_source_row_has_top_border(self, tmp_path: pathlib.Path):
+        ws = _render_and_load(self.table, tmp_path)
+        be = _body_end(self.table)
+        assert ws.cell(row=be + 2, column=1).border.top.style == "thin"
+        assert ws.cell(row=be + 3, column=1).border.top.style is None
+        assert ws.cell(row=be + 4, column=1).border.top.style is None
+
+    def test_all_footer_rows_share_italic_and_size(
+        self, tmp_path: pathlib.Path
+    ):
+        ws = _render_and_load(self.table, tmp_path)
+        be = _body_end(self.table)
+        for r in (be + 2, be + 3, be + 4):
+            cell = ws.cell(row=r, column=1)
+            assert cell.font.italic is True
+            assert cell.font.size == 10
+            assert cell.alignment.wrap_text is True
+
+
+class TestTfootIntegrationExample5:
+    """End-to-end: example_5_customized has title + source + one footnote."""
+
+    def test_full_layout_resolves(self, tmp_path: pathlib.Path):
+        table = example_5_customized()
+        ws = _render_and_load(table, tmp_path)
+
+        # Title at row 1.
+        assert ws.cell(row=1, column=1).value == "Net Revenue by Region"
+
+        # Source + footnote at expected positions.
+        be = _body_end(table)
+        assert ws.cell(row=be + 2, column=1).value == \
+            "Source: internal CRM, 2026-Q1"
+        assert ws.cell(row=be + 3, column=1).value == \
+            "All figures USD. Excludes returns."
+
+        # Source carries the top border; footnote does not.
+        assert ws.cell(row=be + 2, column=1).border.top.style == "thin"
+        assert ws.cell(row=be + 3, column=1).border.top.style is None

@@ -5,9 +5,10 @@ openpyxl. See docs/EXCEL_RENDERER.md for the locked design memo.
 
 Current state: E1 (format resolver + sheet-name validator) + E2 (column
 headers, with merged cells for interior nodes) + E3 (body cells with
-MissingReason dispatch and number-format application). E4-E7 add
-caption/source/footnote, default styling, frozen pane / widths, and the
-Table method wiring. openpyxl is an optional extra — install via
+MissingReason dispatch and number-format application) + E4 (title at
+row 1; source/footnote rows after the body, merged across body cols
+with wrap). E5-E7 add default styling for body cells, frozen pane /
+widths, and the Table method wiring. openpyxl is an optional extra — install via
 `pip install proctab[excel]`. The function-level entry point and the
 Table method both lazy-import openpyxl, so `import proctab` works in
 environments without it.
@@ -298,6 +299,94 @@ def _write_tbody(ws, table: Table, layout: _Layout) -> int:
 
 
 # ---------------------------------------------------------------------------
+# E4 — Title + source + footnotes.
+#
+# Title at row 1 (when `meta.title` is set), merged A1:{last_body_col}1,
+# bold, font size +2 over default. Spacer row 2 left blank.
+# Source row at body_end + 2 (when `meta.source` is set), prefixed
+# "Source: ", merged, italic, smaller font, wrap, thin top border.
+# Footnote rows from body_end + 3, same merging/wrap/italic/smaller
+# font; only the first tfoot row carries the top border (source if
+# present, else the first footnote).
+# ---------------------------------------------------------------------------
+
+
+_TITLE_FONT_SIZE = 13  # default 11 + 2
+_TFOOT_FONT_SIZE = 10  # default - 1
+
+
+def _last_col_index(layout: _Layout) -> int:
+    """1-based column index of the last body column (or column A when
+    the col axis is empty, so title/footer merges stay self-consistent)."""
+    return max(1, 1 + layout.n_col_leaves)
+
+
+def _write_title(ws, table: Table, layout: _Layout) -> None:
+    if not table.meta:
+        return
+    title = table.meta.get("title")
+    if not title:
+        return
+
+    # openpyxl imports lazily — by the time we get here, render_excel
+    # has already done the openpyxl import successfully.
+    from openpyxl.styles import Alignment, Font
+
+    cell = ws.cell(row=1, column=1, value=str(title))
+    cell.font = Font(bold=True, size=_TITLE_FONT_SIZE)
+    cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    end_col = _last_col_index(layout)
+    if end_col > 1:
+        ws.merge_cells(
+            start_row=1, start_column=1,
+            end_row=1, end_column=end_col,
+        )
+
+
+def _write_tfoot(ws, table: Table, layout: _Layout, body_end: int) -> None:
+    if not table.meta:
+        return
+    source = table.meta.get("source")
+    footnotes = table.meta.get("footnotes") or []
+    if not source and not footnotes:
+        return
+
+    from openpyxl.styles import Alignment, Border, Font, Side
+
+    tfoot_font = Font(size=_TFOOT_FONT_SIZE, italic=True)
+    wrap_align = Alignment(
+        horizontal="left", vertical="top", wrap_text=True
+    )
+    thin_top_border = Border(top=Side(style="thin"))
+    end_col = _last_col_index(layout)
+
+    def _emit(row: int, text: str, *, with_top_border: bool) -> None:
+        cell = ws.cell(row=row, column=1, value=text)
+        cell.font = tfoot_font
+        cell.alignment = wrap_align
+        if with_top_border:
+            cell.border = thin_top_border
+        if end_col > 1:
+            ws.merge_cells(
+                start_row=row, start_column=1,
+                end_row=row, end_column=end_col,
+            )
+
+    row = body_end + 2  # blank spacer at body_end + 1
+    if source:
+        _emit(row, f"Source: {source}", with_top_border=True)
+        row += 1
+
+    for i, fn in enumerate(footnotes):
+        # Border only on the first footer row overall — source first if
+        # it's present, else the first footnote.
+        with_top = (not source) and (i == 0)
+        _emit(row, str(fn), with_top_border=with_top)
+        row += 1
+
+
+# ---------------------------------------------------------------------------
 # Top-level entry point.
 # ---------------------------------------------------------------------------
 
@@ -356,7 +445,9 @@ def render_excel(
         last_body_col=last_body_col,
     )
 
+    _write_title(ws, table, layout)
     _write_thead(ws, table.col_axis, layout)
-    _write_tbody(ws, table, layout)
+    body_end = _write_tbody(ws, table, layout)
+    _write_tfoot(ws, table, layout, body_end)
 
     wb.save(path)
