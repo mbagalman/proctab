@@ -376,10 +376,10 @@ def aggregate_data_cells(nw_df: nw.DataFrame, spec: TabSpec) -> AggregateResult:
     in separate groupby passes against source (required for non-additive
     stats like mean/median).
 
-    A single narwhals `group_by(rows + cols).agg(...)` pass computes:
-    - `nw.len()` per group (the EMPTY signal for T4c)
-    - `nw.col(metric).count()` per unique metric (the NULL signal)
-    - `STAT_EXPRS[stat](metric)` per `(metric, stat)` in `spec.values_spec`
+    Aggregations run via the shared `_aggregate_section_arrays()` helper:
+    `nw.len()` per group (T4c's EMPTY signal), `nw.col(metric).count()`
+    per unique metric (T4c's NULL signal), `STAT_EXPRS[stat](metric)`
+    per `(metric, stat)` in `spec.values_spec`.
     """
     keys = list(spec.rows + spec.cols)
 
@@ -399,62 +399,25 @@ def aggregate_data_cells(nw_df: nw.DataFrame, spec: TabSpec) -> AggregateResult:
 
     row_dim_sizes = [len(c) for c in row_cats_per_dim]
     col_dim_sizes = [len(c) for c in col_cats_per_dim]
-    n_rows = _product(row_dim_sizes) if row_dim_sizes else 0
-    n_cols = _product(col_dim_sizes) if col_dim_sizes else 1
-
     metric_names = tuple(dict.fromkeys(m for m, _ in spec.values_spec))
-    n_metrics = len(metric_names)
-    n_stats = len(spec.values_spec)
-
-    stat_values = np.zeros((n_rows, n_cols, n_stats), dtype=np.float64)
-    row_count = np.zeros((n_rows, n_cols), dtype=np.int64)
-    nonnull_count = np.zeros((n_rows, n_cols, n_metrics), dtype=np.int64)
-
-    if n_rows == 0 or (col_cats_per_dim and any(s == 0 for s in col_dim_sizes)):
-        # Some dim has no categories; nothing to aggregate.
-        return AggregateResult(
-            row_categories=row_cats_per_dim,
-            col_categories=col_cats_per_dim,
-            metric_names=metric_names,
-            stat_values=stat_values,
-            row_count=row_count,
-            nonnull_count=nonnull_count,
-        )
 
     row_idx_maps = [{cat.value: i for i, cat in enumerate(cats)}
                     for cats in row_cats_per_dim]
     col_idx_maps = [{cat.value: j for j, cat in enumerate(cats)}
                     for cats in col_cats_per_dim]
-    metric_idx_map = {m: i for i, m in enumerate(metric_names)}
 
-    aggs: list[nw.Expr] = [nw.len().alias("__rowcount__")]
-    for metric in metric_names:
-        aggs.append(nw.col(metric).count().alias(f"__nnc__{metric}"))
-    for idx, (metric, stat) in enumerate(spec.values_spec):
-        aggs.append(STAT_EXPRS[stat](metric).alias(f"__sv__{idx}"))
-
-    grouped = nw_df.group_by(keys).agg(*aggs)
-
-    for row in grouped.iter_rows(named=True):
-        r = _group_flat_index(row, spec.rows, row_idx_maps, row_dim_sizes)
-        if r is None:
-            continue
-        if col_cats_per_dim:
-            c = _group_flat_index(row, spec.cols, col_idx_maps, col_dim_sizes)
-            if c is None:
-                continue
-        else:
-            c = 0
-
-        row_count[r, c] = row["__rowcount__"]
-        for metric in metric_names:
-            nonnull_count[r, c, metric_idx_map[metric]] = row[f"__nnc__{metric}"]
-
-        for idx, (metric, stat) in enumerate(spec.values_spec):
-            v = row[f"__sv__{idx}"]
-            # Null stat results (e.g., mean of all-null group) materialize
-            # as 0.0; T4c uses nonnull_count to flag those cells NULL.
-            stat_values[r, c, idx] = 0.0 if is_null(v) else float(v)
+    stat_values, row_count, nonnull_count = _aggregate_section_arrays(
+        nw_df,
+        group_keys=keys,
+        row_key_names=list(spec.rows),
+        row_key_idx_maps=row_idx_maps,
+        row_dim_sizes=row_dim_sizes,
+        col_key_names=list(spec.cols),
+        col_key_idx_maps=col_idx_maps,
+        col_dim_sizes=col_dim_sizes,
+        metric_names=metric_names,
+        values_spec=spec.values_spec,
+    )
 
     return AggregateResult(
         row_categories=row_cats_per_dim,
@@ -464,6 +427,87 @@ def aggregate_data_cells(nw_df: nw.DataFrame, spec: TabSpec) -> AggregateResult:
         row_count=row_count,
         nonnull_count=nonnull_count,
     )
+
+
+def _aggregate_section_arrays(
+    nw_df: nw.DataFrame,
+    *,
+    group_keys: list[str],
+    row_key_names: list[str],
+    row_key_idx_maps: list[dict],
+    row_dim_sizes: list[int],
+    col_key_names: list[str],
+    col_key_idx_maps: list[dict],
+    col_dim_sizes: list[int],
+    metric_names: tuple[str, ...],
+    values_spec: tuple[tuple[str, str], ...],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Run one groupby+agg pass and materialize the three companion arrays.
+
+    Shared between T4a (data cells) and T4b (subtotals/grand totals).
+    Each section selects different subsets of `row_key_names` /
+    `col_key_names` from the full rows + cols, with the corresponding
+    `*_idx_maps` and `*_dim_sizes` describing only those subsets.
+
+    Empty `row_key_names` collapses the section's row axis to length 1
+    (a single "total" row); same for `col_key_names`.
+
+    Returns `(stat_values, row_count, nonnull_count)` shaped as:
+    - `stat_values`: `(R, C, S)` where R/C are products of the
+      corresponding `*_dim_sizes` (or 1 if empty), S = `len(values_spec)`
+    - `row_count`: `(R, C)`
+    - `nonnull_count`: `(R, C, M)` with M = `len(metric_names)`
+    """
+    n_rows = _product(row_dim_sizes) if row_dim_sizes else 1
+    n_cols = _product(col_dim_sizes) if col_dim_sizes else 1
+    n_metrics = len(metric_names)
+    n_stats = len(values_spec)
+
+    stat_values = np.zeros((n_rows, n_cols, n_stats), dtype=np.float64)
+    row_count = np.zeros((n_rows, n_cols), dtype=np.int64)
+    nonnull_count = np.zeros((n_rows, n_cols, n_metrics), dtype=np.int64)
+
+    if n_rows == 0 or n_cols == 0:
+        return stat_values, row_count, nonnull_count
+
+    metric_idx_map = {m: i for i, m in enumerate(metric_names)}
+
+    aggs: list[nw.Expr] = [nw.len().alias("__rowcount__")]
+    for metric in metric_names:
+        aggs.append(nw.col(metric).count().alias(f"__nnc__{metric}"))
+    for idx, (metric, stat) in enumerate(values_spec):
+        aggs.append(STAT_EXPRS[stat](metric).alias(f"__sv__{idx}"))
+
+    if group_keys:
+        grouped = nw_df.group_by(group_keys).agg(*aggs)
+    else:
+        # No group keys → single-row aggregate over the whole frame.
+        grouped = nw_df.select(*aggs)
+
+    for row in grouped.iter_rows(named=True):
+        if row_key_names:
+            r = _group_flat_index(row, row_key_names, row_key_idx_maps, row_dim_sizes)
+            if r is None:
+                continue
+        else:
+            r = 0
+
+        if col_key_names:
+            c = _group_flat_index(row, col_key_names, col_key_idx_maps, col_dim_sizes)
+            if c is None:
+                continue
+        else:
+            c = 0
+
+        row_count[r, c] = row["__rowcount__"]
+        for metric in metric_names:
+            nonnull_count[r, c, metric_idx_map[metric]] = row[f"__nnc__{metric}"]
+
+        for idx, (metric, stat) in enumerate(values_spec):
+            v = row[f"__sv__{idx}"]
+            stat_values[r, c, idx] = 0.0 if is_null(v) else float(v)
+
+    return stat_values, row_count, nonnull_count
 
 
 def _product(xs: list[int]) -> int:
@@ -490,3 +534,183 @@ def _group_flat_index(
             return None
         flat = flat * dim_sizes[dim_i] + idx
     return flat
+
+
+# === T4b: subtotals + grand-total aggregation ==============================
+
+
+@dataclass(frozen=True)
+class SectionResult:
+    """One aggregation pass result for a (subtotal/total) section of the
+    final body. Same triple-array shape as `AggregateResult`'s data-cell
+    arrays, with the dimensions sized to that section's scope."""
+    stat_values: np.ndarray   # (R, C, S)
+    row_count: np.ndarray     # (R, C)
+    nonnull_count: np.ndarray  # (R, C, M)
+
+
+@dataclass(frozen=True)
+class TotalsResult:
+    """Subtotal + grand-total aggregations computed FROM SOURCE.
+
+    Per TABULATE_API.md T4b, subtotals/totals cannot be derived by summing
+    leaf cells from T4a — non-additive stats (mean, median) require fresh
+    groupby passes against the source. All entries here are independent
+    aggregations.
+
+    Keys / shape per entry:
+
+    - `subtotals_data_cols[dim_name]`: one entry per `spec.subtotals` dim.
+      Shape `(n_subtotal_cats, C, S/M)` — subtotal rows under the data
+      col groups (where C = T4a's n_cols).
+    - `subtotals_total_col[dim_name]`: same dim names; only present when
+      `spec.totals AND spec.cols` (i.e., a Total col exists). Shape
+      `(n_subtotal_cats, 1, S/M)` — subtotal rows under the Total col.
+    - `grand_row`: shape `(1, C, S/M)` — the Total row under data cols.
+      None when `spec.totals=False` or `n_rows == 0`.
+    - `grand_col`: shape `(R, 1, S/M)` — the Total col under data rows.
+      None when `spec.totals=False` or `spec.cols=()` or any dim is empty.
+    - `grand_cell`: shape `(1, 1, S/M)` — the Total row × Total col
+      intersection. None whenever `grand_col` is None.
+    """
+    subtotals_data_cols: dict[str, SectionResult]
+    subtotals_total_col: dict[str, SectionResult]
+    grand_row: SectionResult | None
+    grand_col: SectionResult | None
+    grand_cell: SectionResult | None
+
+
+def aggregate_totals(
+    nw_df: nw.DataFrame, spec: TabSpec, data_result: AggregateResult,
+) -> TotalsResult:
+    """Run the subtotal + grand-total aggregation passes from source data.
+
+    Reuses `data_result.row_categories` / `col_categories` / `metric_names`
+    to avoid re-resolving the categorical domains. Honors `spec.dropna`
+    in the same way `aggregate_data_cells()` did.
+
+    Sections are computed per the TABULATE_API conditions:
+    - `subtotals_data_cols[dim]` for each `dim in spec.subtotals` (and
+      `n_rows > 0`)
+    - `subtotals_total_col[dim]` additionally when a Total col exists
+    - `grand_row` when `spec.totals` and `n_rows > 0`
+    - `grand_col` and `grand_cell` when `spec.totals` and a Total col exists
+    """
+    if spec.dropna:
+        nw_df = nw_df.drop_nulls(subset=list(spec.rows + spec.cols))
+
+    row_dim_sizes = [len(c) for c in data_result.row_categories]
+    col_dim_sizes = [len(c) for c in data_result.col_categories]
+    n_rows = _product(row_dim_sizes) if row_dim_sizes else 0
+    n_cols = _product(col_dim_sizes) if col_dim_sizes else 1
+
+    row_idx_maps = [{cat.value: i for i, cat in enumerate(cats)}
+                    for cats in data_result.row_categories]
+    col_idx_maps = [{cat.value: j for j, cat in enumerate(cats)}
+                    for cats in data_result.col_categories]
+
+    has_any_row = n_rows > 0
+    has_total_col = bool(spec.totals and spec.cols and n_cols > 0 and has_any_row)
+    has_total_row = bool(spec.totals and has_any_row)
+
+    # --- subtotals --------------------------------------------------------
+    subtotals_data_cols: dict[str, SectionResult] = {}
+    subtotals_total_col: dict[str, SectionResult] = {}
+
+    for st_dim in spec.subtotals:
+        if not has_any_row:
+            break  # no rows at all → no subtotals
+        st_idx = list(spec.rows).index(st_dim)
+        # Outer rows kept in the groupby; inner rows consolidated.
+        outer_rows = list(spec.rows)[: st_idx + 1]
+        outer_idx_maps = row_idx_maps[: st_idx + 1]
+        outer_sizes = row_dim_sizes[: st_idx + 1]
+
+        # Subtotal under DATA cols
+        sv, rc, nnc = _aggregate_section_arrays(
+            nw_df,
+            group_keys=outer_rows + list(spec.cols),
+            row_key_names=outer_rows,
+            row_key_idx_maps=outer_idx_maps,
+            row_dim_sizes=outer_sizes,
+            col_key_names=list(spec.cols),
+            col_key_idx_maps=col_idx_maps,
+            col_dim_sizes=col_dim_sizes,
+            metric_names=data_result.metric_names,
+            values_spec=spec.values_spec,
+        )
+        subtotals_data_cols[st_dim] = SectionResult(sv, rc, nnc)
+
+        # Subtotal under TOTAL col (if a Total col exists)
+        if has_total_col:
+            sv, rc, nnc = _aggregate_section_arrays(
+                nw_df,
+                group_keys=outer_rows,
+                row_key_names=outer_rows,
+                row_key_idx_maps=outer_idx_maps,
+                row_dim_sizes=outer_sizes,
+                col_key_names=[],
+                col_key_idx_maps=[],
+                col_dim_sizes=[],
+                metric_names=data_result.metric_names,
+                values_spec=spec.values_spec,
+            )
+            subtotals_total_col[st_dim] = SectionResult(sv, rc, nnc)
+
+    # --- grand row (Total row under data cols) ----------------------------
+    grand_row: SectionResult | None = None
+    if has_total_row:
+        sv, rc, nnc = _aggregate_section_arrays(
+            nw_df,
+            group_keys=list(spec.cols),
+            row_key_names=[],
+            row_key_idx_maps=[],
+            row_dim_sizes=[],
+            col_key_names=list(spec.cols),
+            col_key_idx_maps=col_idx_maps,
+            col_dim_sizes=col_dim_sizes,
+            metric_names=data_result.metric_names,
+            values_spec=spec.values_spec,
+        )
+        grand_row = SectionResult(sv, rc, nnc)
+
+    # --- grand col (Total col under data rows) ----------------------------
+    grand_col: SectionResult | None = None
+    grand_cell: SectionResult | None = None
+    if has_total_col:
+        sv, rc, nnc = _aggregate_section_arrays(
+            nw_df,
+            group_keys=list(spec.rows),
+            row_key_names=list(spec.rows),
+            row_key_idx_maps=row_idx_maps,
+            row_dim_sizes=row_dim_sizes,
+            col_key_names=[],
+            col_key_idx_maps=[],
+            col_dim_sizes=[],
+            metric_names=data_result.metric_names,
+            values_spec=spec.values_spec,
+        )
+        grand_col = SectionResult(sv, rc, nnc)
+
+        # --- grand cell (Total row × Total col) ---------------------------
+        sv, rc, nnc = _aggregate_section_arrays(
+            nw_df,
+            group_keys=[],
+            row_key_names=[],
+            row_key_idx_maps=[],
+            row_dim_sizes=[],
+            col_key_names=[],
+            col_key_idx_maps=[],
+            col_dim_sizes=[],
+            metric_names=data_result.metric_names,
+            values_spec=spec.values_spec,
+        )
+        grand_cell = SectionResult(sv, rc, nnc)
+
+    return TotalsResult(
+        subtotals_data_cols=subtotals_data_cols,
+        subtotals_total_col=subtotals_total_col,
+        grand_row=grand_row,
+        grand_col=grand_col,
+        grand_cell=grand_cell,
+    )
