@@ -13,10 +13,8 @@
 The go-to Python library for producing executive-ready summary
 tables and categorical crosstabs from business data — the kind of
 output an analyst hands to a leadership team without further
-formatting. The design takes inspiration from SAS `PROC FREQ` and
-`PROC TABULATE`, both of which solved this problem cleanly decades
-ago, but adapts the ideas to the modern Python data stack
-(pandas + polars via [narwhals](https://narwhals-dev.github.io/narwhals/)).
+formatting. Built on the modern Python data stack (pandas +
+polars via [narwhals](https://narwhals-dev.github.io/narwhals/)).
 
 The two headline functions:
 
@@ -78,8 +76,8 @@ to yet because there are no releases. Issues are not yet being
 triaged from the public — this is still single-author design
 work.
 
-If you came across this looking for a SAS-style tabulation
-library for Python today and want something usable *now*,
+If you came across this looking for a Python summary-table or
+crosstab library and want something usable *now*,
 [pandas crosstab / pivot_table](https://pandas.pydata.org/docs/reference/api/pandas.crosstab.html),
 [great_tables](https://posit-dev.github.io/great-tables/), and
 [itables](https://mwouts.github.io/itables/) are all worth a look.
