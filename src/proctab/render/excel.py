@@ -3,10 +3,10 @@
 v0.1: single default theme, single sheet, written to a path on disk via
 openpyxl. See docs/EXCEL_RENDERER.md for the locked design memo.
 
-Current state: E1 (module skeleton + format-resolution helper +
-sheet-name validator). E2-E7 add column headers, body, caption/source/
-footnote, default styling, frozen pane / widths, and the Table method
-wiring. openpyxl is an optional extra — install via
+Current state: E1 (format resolver + sheet-name validator) + E2 (column
+headers, with merged cells for interior nodes). E3-E7 add body content,
+caption/source/footnote, default styling, frozen pane / widths, and the
+Table method wiring. openpyxl is an optional extra — install via
 `pip install proctab[excel]`. The function-level entry point and the
 Table method both lazy-import openpyxl, so `import proctab` works in
 environments without it.
@@ -15,8 +15,16 @@ environments without it.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
-from proctab.model import Table, ValueKind
+from proctab.model import (
+    Category,
+    Node,
+    SubtotalMarker,
+    Table,
+    TotalMarker,
+    ValueKind,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +133,84 @@ def _validate_sheet_name(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Layout + shared tree-walking helpers (used by E2 onward).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Layout:
+    """Row/column-position variables per docs/EXCEL_RENDERER.md.
+
+    Computed once per `render_excel` call and threaded to helper
+    functions so layout math doesn't drift between sections.
+    """
+    title_present: bool
+    H: int                # number of col-axis dim header rows
+    n_col_leaves: int
+    header_start: int     # first header row (3 if title, else 1)
+    body_start: int       # first body row (header_start + H)
+    last_body_col: str    # Excel column letter for the last body col
+
+
+def _nodes_at_depth(root: Node, depth: int) -> list[Node]:
+    if root.depth == depth:
+        return [root]
+    if root.children is None:
+        return []
+    out: list[Node] = []
+    for child in root.children:
+        out.extend(_nodes_at_depth(child, depth))
+    return out
+
+
+def _node_label(node: Node) -> str:
+    if node.label is not None:
+        return node.label
+    if not node.path:
+        return ""
+    el = node.path[-1]
+    if isinstance(el, Category):
+        return str(el.label if el.label is not None else el.value)
+    if isinstance(el, TotalMarker):
+        return "Total"
+    if isinstance(el, SubtotalMarker):
+        return f"{el.at_dim} Subtotal"
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# E2 — Column header rendering.
+# ---------------------------------------------------------------------------
+
+
+def _write_thead(ws, col_axis, layout: _Layout) -> None:
+    """Write column headers into rows `header_start..header_start + H - 1`.
+
+    Per docs/EXCEL_RENDERER.md, interior nodes that span multiple leaves
+    are emitted with merged cells across `node.span` columns; innermost-
+    depth leaves are single cells. The top-left corner (column A on
+    every header row) is left blank. Per-cell styling lands in E5.
+    """
+    H = layout.H
+    if H == 0:
+        # Empty col axis — no headers to emit. Title row stays bare; the
+        # body section is also empty.
+        return
+
+    for d in range(1, H + 1):
+        row = layout.header_start + d - 1
+        col = 2  # column A is the blank corner; first content in column B
+        for node in _nodes_at_depth(col_axis.tree, d):
+            ws.cell(row=row, column=col, value=_node_label(node))
+            if node.span > 1:
+                ws.merge_cells(
+                    start_row=row, start_column=col,
+                    end_row=row, end_column=col + node.span - 1,
+                )
+            col += node.span
+
+
+# ---------------------------------------------------------------------------
 # Top-level entry point.
 # ---------------------------------------------------------------------------
 
@@ -137,9 +223,9 @@ def render_excel(
 ) -> None:
     """Render a `Table` to an `.xlsx` file at `path`.
 
-    Current state: E1 stub — opens a workbook, sets the sheet name,
-    and saves. E2-E6 add column headers, body, caption/source/footnote,
-    default styling, frozen pane, and column widths.
+    Current state: writes a workbook with the column-header band (E2).
+    E3-E6 add body, caption/source/footnote, default styling, and the
+    frozen pane / column widths.
 
     `sheet` becomes the worksheet name; must satisfy Excel's rules
     (1-31 characters, no `\\ / ? * [ ] :`). Violations raise
@@ -150,6 +236,7 @@ def render_excel(
     """
     try:
         from openpyxl import Workbook
+        from openpyxl.utils import get_column_letter
     except ImportError as exc:
         raise ImportError(
             "Excel export requires openpyxl. Install with "
@@ -157,9 +244,27 @@ def render_excel(
         ) from exc
 
     _validate_sheet_name(sheet)
-    _ = table  # E2-E6 will consume the table to fill in cell content.
 
     wb = Workbook()
     ws = wb.active
     ws.title = sheet
+
+    title_present = bool(table.meta.get("title"))
+    H = len(table.col_axis.dims)
+    n_col_leaves = len(table.col_axis.leaves())
+    header_start = 3 if title_present else 1
+    body_start = header_start + H
+    last_body_col = get_column_letter(max(1, 1 + n_col_leaves))
+
+    layout = _Layout(
+        title_present=title_present,
+        H=H,
+        n_col_leaves=n_col_leaves,
+        header_start=header_start,
+        body_start=body_start,
+        last_body_col=last_body_col,
+    )
+
+    _write_thead(ws, table.col_axis, layout)
+
     wb.save(path)
