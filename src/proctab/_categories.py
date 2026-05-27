@@ -83,10 +83,15 @@ def resolve_categories(
     """
     if levels and key in levels:
         levels_seq = list(levels[key])
-        cats = [Category(v) for v in levels_seq]
+        # Normalize null-like inputs (np.nan, pd.NA, pd.NaT) to None
+        # so a user-supplied null routes data correctly — without
+        # normalization, the resulting Category(np.nan) would never
+        # match a null source row (which the engine surfaces as None).
+        normalized = [normalize(v) for v in levels_seq]
+        cats = [Category(v) for v in normalized]
         if (
             not dropna
-            and None not in levels_seq
+            and None not in normalized
             and column_has_nulls(nw_df, key)
         ):
             cats.append(Category(None, label="Missing"))

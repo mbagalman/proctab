@@ -1695,3 +1695,151 @@ class TestTableToExcel:
 
         with pytest.raises(ImportError, match=r"proctab\[excel\]"):
             example_5_customized().to_excel(tmp_path / "missing.xlsx")
+
+
+# ---------------------------------------------------------------------------
+# CR-01 regression: openpyxl renders merged-range borders only when each
+# perimeter cell carries the border (the top-left-only approach silently
+# truncates the bottom/top edge of any merged span > 1).
+# ---------------------------------------------------------------------------
+
+
+class TestMergedHeaderBordersSpreadAcrossRange:
+    """Outer (merged) col-header bottom border applies to every cell in
+    the merged range, not just the top-left."""
+
+    def test_two_way_outer_total_bottom_border_on_every_cell(
+        self, tmp_path: pathlib.Path
+    ):
+        # example_1b_two_way_freq: header row 3, "Total" merged J3:M3.
+        # Without the CR-01 fix, only J3 carries the thin bottom border;
+        # K3/L3/M3 are borderless. Fix: per-side spread.
+        table = example_1b_two_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        for c in (10, 11, 12, 13):  # J..M
+            cell = ws.cell(row=3, column=c)
+            assert _border_style(cell.border.bottom) == "thin", (
+                f"col {c} should have thin bottom border in merged range"
+            )
+
+    def test_two_way_outer_data_group_bottom_border_on_every_cell(
+        self, tmp_path: pathlib.Path
+    ):
+        # Widget A merged B3:E3 — same spread requirement.
+        table = example_1b_two_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        for c in (2, 3, 4, 5):  # B..E
+            cell = ws.cell(row=3, column=c)
+            assert _border_style(cell.border.bottom) == "thin"
+
+    def test_tabulate_three_dim_inner_groups_bottom_border_on_every_cell(
+        self, tmp_path: pathlib.Path
+    ):
+        # example_2_tabulate_v01 row 2: revenue spans B2:C2. Border on
+        # both B2 and C2 (not just B2).
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        for c in (2, 3):
+            cell = ws.cell(row=2, column=c)
+            assert _border_style(cell.border.bottom) == "thin"
+
+    def test_left_border_NOT_spread_across_total_group(
+        self, tmp_path: pathlib.Path
+    ):
+        # The Total col left divider is one vertical line at the LEFT
+        # EDGE of the group — it must NOT appear between adjacent
+        # stats inside the group.
+        table = example_1b_two_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        # Leftmost of Total group: J (col 10) — has left border.
+        assert _border_style(ws.cell(row=3, column=10).border.left) == "medium"
+        # Cells inside the Total group: K, L, M — no left border.
+        for c in (11, 12, 13):
+            assert _border_style(ws.cell(row=3, column=c).border.left) is None
+
+
+class TestMergedFooterBordersSpreadAcrossRange:
+    """Source/footnote rows: thin top border applies to every cell in
+    the merged range, not just A."""
+
+    def test_source_top_border_on_every_cell(self, tmp_path: pathlib.Path):
+        # example_5_customized: source row is body_end + 2; merged A..E.
+        table = example_5_customized()
+        ws = _render_and_load(table, tmp_path)
+        be = _body_end(table)
+        for c in (1, 2, 3, 4, 5):
+            cell = ws.cell(row=be + 2, column=c)
+            assert _border_style(cell.border.top) == "thin", (
+                f"col {c} should have thin top border in source merge"
+            )
+
+    def test_first_footnote_top_border_on_every_cell_when_no_source(
+        self, tmp_path: pathlib.Path
+    ):
+        # Footnotes-only fixture: first footnote takes the source slot
+        # and should have the border spread.
+        table = _table_with_meta_at_top({"footnotes": ["a note"]})
+        ws = _render_and_load(table, tmp_path)
+        be = _body_end(table)
+        # 1-col table → only col 1 + col 2 (last_body_col = B). But
+        # _table_with_meta_at_top builds a 1×1 table, so end_col = 2.
+        # The footnote row is merged A..B; both cells need top border.
+        # (Footnote is at body_end + 2 since no source is present.)
+        for c in (1, 2):
+            cell = ws.cell(row=be + 2, column=c)
+            assert _border_style(cell.border.top) == "thin"
+
+
+class TestApplyPerimeterBordersHelper:
+    """Unit test for the helper that spreads border sides across a range."""
+
+    def test_top_bottom_apply_to_every_cell(self, tmp_path: pathlib.Path):
+        from proctab.render.excel import _apply_perimeter_borders
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _apply_perimeter_borders(
+            ws, row=1, start_col=2, end_col=5, sides={"top": "thin", "bottom": "medium"}
+        )
+        for c in range(2, 6):
+            assert _border_style(ws.cell(row=1, column=c).border.top) == "thin"
+            assert _border_style(ws.cell(row=1, column=c).border.bottom) == "medium"
+
+    def test_left_only_on_leftmost(self, tmp_path: pathlib.Path):
+        from proctab.render.excel import _apply_perimeter_borders
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _apply_perimeter_borders(
+            ws, row=1, start_col=2, end_col=5, sides={"left": "medium"}
+        )
+        assert _border_style(ws.cell(row=1, column=2).border.left) == "medium"
+        for c in range(3, 6):
+            assert _border_style(ws.cell(row=1, column=c).border.left) is None
+
+    def test_right_only_on_rightmost(self, tmp_path: pathlib.Path):
+        from proctab.render.excel import _apply_perimeter_borders
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _apply_perimeter_borders(
+            ws, row=1, start_col=2, end_col=5, sides={"right": "thick"}
+        )
+        for c in range(2, 5):
+            assert _border_style(ws.cell(row=1, column=c).border.right) is None
+        assert _border_style(ws.cell(row=1, column=5).border.right) == "thick"
+
+    def test_preserves_existing_unrelated_sides(self, tmp_path: pathlib.Path):
+        # If a cell already has a left border (e.g., from in_total_col),
+        # applying just top shouldn't clear the left.
+        from openpyxl.styles import Border, Side
+        from proctab.render.excel import _apply_perimeter_borders
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.cell(row=1, column=2).border = Border(left=Side(style="medium"))
+        _apply_perimeter_borders(
+            ws, row=1, start_col=2, end_col=4, sides={"top": "thin"}
+        )
+        assert _border_style(ws.cell(row=1, column=2).border.left) == "medium"
+        assert _border_style(ws.cell(row=1, column=2).border.top) == "thin"

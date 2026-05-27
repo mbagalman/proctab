@@ -268,3 +268,83 @@ class TestTwoWayEdges:
         assert len(table.row_axis.leaves()) == 0
         assert len(table.col_axis.leaves()) == 0
         assert table.body.shape == (0, 0)
+
+
+# === CR-02 regression: null-like values in levels= =========================
+
+
+class TestNullInLevels:
+    """CR-02: when a user puts `np.nan` or `pd.NA` in `levels=`, it
+    should collapse to the same Missing bucket as actual nulls in the
+    data. Without normalization, the resulting `Category(np.nan)` never
+    matches null rows (which the engine surfaces as `None`), so the
+    "Missing" slot ends up with a 0/EMPTY count even though the data
+    has nulls.
+    """
+
+    @pytest.fixture
+    def df_with_nulls(self):
+        pd = pytest.importorskip("pandas")
+        return pd.DataFrame({
+            "region": ["W", "E", None, "W", None, "E", None],
+        })
+
+    def test_np_nan_in_levels_routes_null_rows(self, df_with_nulls):
+        # 3 None values in the data — np.nan in levels should grab them.
+        table = pt.freq(
+            df_with_nulls, "region",
+            observed=False, levels={"region": [np.nan, "W", "E"]},
+        )
+        df = table.to_pandas()
+        null_n = df[
+            df["region"].isna()
+            & (df["_stat"] == "N")
+            & (df["_row_role"] == "data")
+        ]["_value"]
+        assert list(null_n) == [3.0]
+
+    def test_pd_na_in_levels_routes_null_rows(self, df_with_nulls):
+        pd = pytest.importorskip("pandas")
+        # pd.NA is a separate sentinel from np.nan; both should normalize.
+        table = pt.freq(
+            df_with_nulls, "region",
+            observed=False, levels={"region": [pd.NA, "W", "E"]},
+        )
+        df = table.to_pandas()
+        null_n = df[
+            df["region"].isna()
+            & (df["_stat"] == "N")
+            & (df["_row_role"] == "data")
+        ]["_value"]
+        assert list(null_n) == [3.0]
+
+    def test_none_in_levels_still_works(self, df_with_nulls):
+        # Pre-existing behavior — explicit `None` in levels has always
+        # routed nulls correctly; check it still does after the
+        # normalization change.
+        table = pt.freq(
+            df_with_nulls, "region",
+            observed=False, levels={"region": [None, "W", "E"]},
+        )
+        df = table.to_pandas()
+        null_n = df[
+            df["region"].isna()
+            & (df["_stat"] == "N")
+            & (df["_row_role"] == "data")
+        ]["_value"]
+        assert list(null_n) == [3.0]
+
+    def test_no_extra_missing_appended_when_user_supplies_nan(
+        self, df_with_nulls,
+    ):
+        # If the user includes a null-like value in levels=, the
+        # auto-append of `Category(None, label="Missing")` MUST NOT
+        # also fire — otherwise we'd get TWO null rows.
+        table = pt.freq(
+            df_with_nulls, "region",
+            observed=False, levels={"region": [np.nan, "W", "E"]},
+        )
+        # Exactly 3 row leaves (np.nan, W, E) + 1 total — no duplicate
+        # null bucket.
+        n_leaves = len(table.row_axis.leaves())
+        assert n_leaves == 4  # 3 categories + Total

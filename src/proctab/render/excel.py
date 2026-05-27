@@ -224,10 +224,29 @@ _STYLE_REGISTRY: dict[str, dict[str, dict]] = {
 }
 
 
-def _apply_style(cell, role_keys, *, indent: int | None = None) -> None:
+def _apply_style(
+    cell,
+    role_keys,
+    *,
+    indent: int | None = None,
+    end_col: int | None = None,
+) -> None:
     """Compose `Font`/`Alignment`/`Border` from `_STYLE_REGISTRY` entries
     and apply to `cell`. Optional `indent` overrides the alignment indent
     (used by row labels at varying depths).
+
+    `end_col` extends border application across a horizontal merged range
+    starting at `cell`. Font and alignment stay on the top-left cell
+    (Excel reads merged-cell display from there), but borders MUST be
+    spread cell-by-cell across the merged span — otherwise Excel only
+    renders the borders declared on the top-left cell, leaving the
+    other columns of the merge with a truncated perimeter. Per-side
+    rules: `top`/`bottom` apply to every cell in the range;
+    `left` applies only to the leftmost; `right` only to the rightmost.
+
+    Callers should invoke this BEFORE calling `ws.merge_cells(...)` so
+    that every position is still a regular `Cell` (not a `MergedCell`,
+    which silently no-ops when style is assigned).
     """
     font_kwargs: dict = {}
     align_kwargs: dict = {}
@@ -242,17 +261,50 @@ def _apply_style(cell, role_keys, *, indent: int | None = None) -> None:
     if indent is not None:
         align_kwargs["indent"] = indent
 
-    from openpyxl.styles import Alignment, Border, Font, Side
+    from openpyxl.styles import Alignment, Font
 
     if font_kwargs:
         cell.font = Font(**font_kwargs)
     if align_kwargs:
         cell.alignment = Alignment(**align_kwargs)
     if border_sides:
-        cell.border = Border(**{
-            side: Side(style=style_name)
-            for side, style_name in border_sides.items()
-        })
+        _apply_perimeter_borders(
+            cell.parent,
+            row=cell.row,
+            start_col=cell.column,
+            end_col=end_col if end_col is not None else cell.column,
+            sides=border_sides,
+        )
+
+
+def _apply_perimeter_borders(ws, *, row, start_col, end_col, sides) -> None:
+    """Apply border sides to a horizontal range with per-side rules:
+    `top`/`bottom` on every cell, `left` only on `start_col`, `right`
+    only on `end_col`. Preserves existing border sides not being set.
+    Must be called BEFORE merging so each cell in the range is a
+    regular `Cell` (post-merge cells are `MergedCell` and silently
+    ignore style writes).
+    """
+    from openpyxl.styles import Border, Side
+
+    for col in range(start_col, end_col + 1):
+        target = ws.cell(row=row, column=col)
+        existing = target.border or Border()
+        kwargs = {
+            "top": existing.top,
+            "bottom": existing.bottom,
+            "left": existing.left,
+            "right": existing.right,
+        }
+        if "top" in sides:
+            kwargs["top"] = Side(style=sides["top"])
+        if "bottom" in sides:
+            kwargs["bottom"] = Side(style=sides["bottom"])
+        if "left" in sides and col == start_col:
+            kwargs["left"] = Side(style=sides["left"])
+        if "right" in sides and col == end_col:
+            kwargs["right"] = Side(style=sides["right"])
+        target.border = Border(**kwargs)
 
 
 def _total_col_left_edges(col_axis: Axis) -> set[int]:
@@ -367,16 +419,22 @@ def _write_thead(ws, col_axis, layout: _Layout) -> None:
         col = 2  # column A is the blank corner; first content in column B
         for node in _nodes_at_depth(col_axis.tree, d):
             cell = ws.cell(row=row, column=col, value=_node_label(node))
+
+            role_keys = ["col_header"]
+            if col in left_edges:
+                role_keys.append("in_total_col")
+            # Style BEFORE merging so the bottom border is spread
+            # across every cell in the merged range (per the CR-01
+            # openpyxl gotcha — see _apply_perimeter_borders).
+            _apply_style(
+                cell, role_keys, end_col=col + node.span - 1
+            )
+
             if node.span > 1:
                 ws.merge_cells(
                     start_row=row, start_column=col,
                     end_row=row, end_column=col + node.span - 1,
                 )
-
-            role_keys = ["col_header"]
-            if col in left_edges:
-                role_keys.append("in_total_col")
-            _apply_style(cell, role_keys)
 
             col += node.span
 
@@ -533,13 +591,12 @@ def _write_tfoot(ws, table: Table, layout: _Layout, body_end: int) -> None:
     if not source and not footnotes:
         return
 
-    from openpyxl.styles import Alignment, Border, Font, Side
+    from openpyxl.styles import Alignment, Font
 
     tfoot_font = Font(size=_TFOOT_FONT_SIZE, italic=True)
     wrap_align = Alignment(
         horizontal="left", vertical="top", wrap_text=True
     )
-    thin_top_border = Border(top=Side(style="thin"))
     end_col = _last_col_index(layout)
 
     def _emit(row: int, text: str, *, with_top_border: bool) -> None:
@@ -547,7 +604,14 @@ def _write_tfoot(ws, table: Table, layout: _Layout, body_end: int) -> None:
         cell.font = tfoot_font
         cell.alignment = wrap_align
         if with_top_border:
-            cell.border = thin_top_border
+            # Spread the thin top border across the merged range
+            # BEFORE merging, so every cell carries the border
+            # (Excel only renders borders declared on each visible
+            # perimeter cell — see CR-01).
+            _apply_perimeter_borders(
+                ws, row=row, start_col=1, end_col=end_col,
+                sides={"top": "thin"},
+            )
         if end_col > 1:
             ws.merge_cells(
                 start_row=row, start_column=1,
