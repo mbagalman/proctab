@@ -539,3 +539,268 @@ class TestTheadCornerCellAlwaysBlank:
             assert ws.cell(row=r, column=1).value is None, (
                 f"corner A{r} should be blank in {fixture.__name__}"
             )
+
+
+# ---------------------------------------------------------------------------
+# E3 — body rendering. Reopen the rendered file and walk body cells.
+# ---------------------------------------------------------------------------
+
+
+def _body_start(table) -> int:
+    """Match the renderer's body_start = header_start + H."""
+    title_present, H, header_start = _layout_for(table)
+    return header_start + H
+
+
+class TestTbodyOneWay:
+    """example_1_one_way_freq: 5 leaf rows (4 data + 1 total), no group
+    headers. Each leaf row: row label at A + 4 numeric cells at B..E."""
+
+    def test_row_count_matches_leaves(self, tmp_path: pathlib.Path):
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        body_start = _body_start(table)
+        n_leaves = len(table.row_axis.leaves())  # 5
+        # First non-leaf row after body should be empty (no spacer yet in E3).
+        for i in range(n_leaves):
+            assert ws.cell(row=body_start + i, column=1).value is not None
+        assert ws.cell(row=body_start + n_leaves, column=1).value is None
+
+    def test_row_labels(self, tmp_path: pathlib.Path):
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        labels = [ws.cell(row=bs + i, column=1).value for i in range(5)]
+        assert labels == ["West", "East", "South", "North", "Total"]
+
+    def test_data_cells_numeric(self, tmp_path: pathlib.Path):
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # West row: N=45, Pct=30.0, CumN=45, CumPct=30.0
+        assert ws.cell(row=bs, column=2).value == 45
+        assert ws.cell(row=bs, column=3).value == 30.0
+        assert ws.cell(row=bs, column=4).value == 45
+        assert ws.cell(row=bs, column=5).value == 30.0
+
+    def test_total_row_cells_numeric(self, tmp_path: pathlib.Path):
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # Total row (last): N=150, Pct=100.0, CumN=150, CumPct=100.0
+        total_row = bs + 4
+        assert ws.cell(row=total_row, column=2).value == 150
+        assert ws.cell(row=total_row, column=3).value == 100.0
+
+    def test_count_columns_use_count_format(self, tmp_path: pathlib.Path):
+        # value_kind=count, formats[j]="{:.0f}" → resolver returns "0".
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        for r in range(bs, bs + 5):
+            assert ws.cell(row=r, column=2).number_format == "0"
+            assert ws.cell(row=r, column=4).number_format == "0"
+
+    def test_percent_columns_use_literal_percent_format(
+        self, tmp_path: pathlib.Path
+    ):
+        # value_kind=percent, formats[j]="{:.1f}%" — 0-100 storage —
+        # resolver returns '0.0"%"'. Key P1 regression: WITHOUT this,
+        # raw 30.0 would render as "3000.0%" via the "0.0%" default.
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        for r in range(bs, bs + 5):
+            assert ws.cell(row=r, column=3).number_format == '0.0"%"'
+            assert ws.cell(row=r, column=5).number_format == '0.0"%"'
+
+
+class TestTbodyTabulate:
+    """example_2_tabulate_v01: 2 group headers (E, W) + 4 data leaves +
+    2 subtotals + 1 grand total = 9 body rows. Group rows have only the
+    row label; leaf rows carry numeric body cells."""
+
+    def test_row_count_groups_plus_leaves(self, tmp_path: pathlib.Path):
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # 9 body rows total; row 10 should be the first blank.
+        for i in range(9):
+            assert ws.cell(row=bs + i, column=1).value is not None
+        assert ws.cell(row=bs + 9, column=1).value is None
+
+    def test_row_labels_in_order(self, tmp_path: pathlib.Path):
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        labels = [ws.cell(row=bs + i, column=1).value for i in range(9)]
+        assert labels == [
+            "E", "A", "B", "E Subtotal",
+            "W", "A", "B", "W Subtotal",
+            "Grand Total",
+        ]
+
+    def test_group_header_rows_have_blank_body_cells(
+        self, tmp_path: pathlib.Path
+    ):
+        # E (row bs) and W (row bs+4) are interior nodes — column A only.
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        for row in (bs, bs + 4):
+            for col in range(2, 11):  # 9 body cols (B..J)
+                assert ws.cell(row=row, column=col).value is None
+
+    def test_leaf_rows_have_numeric_body_cells(
+        self, tmp_path: pathlib.Path
+    ):
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # E.A leaf is bs+1; check it has 9 numeric cells.
+        for col in range(2, 11):
+            v = ws.cell(row=bs + 1, column=col).value
+            assert v is not None
+            assert isinstance(v, (int, float))
+
+    def test_grand_total_row_has_data(self, tmp_path: pathlib.Path):
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        grand_total_row = bs + 8
+        # Grand Total should sum sums and average means. First cell:
+        # revenue.sum at Q1 = 10+30+50+70 = 160.
+        assert ws.cell(row=grand_total_row, column=2).value == 160
+
+
+def _one_row_table_with_missing(body, missing_codes, formats=None, kinds=None):
+    """Tiny 1-row × N-col table for MissingReason dispatch tests."""
+    from proctab.model import Axis, Category, Dimension, Node, Table
+
+    n = len(body)
+    if formats is None:
+        formats = (None,) * n
+    if kinds is None:
+        kinds = ("raw",) * n
+
+    row_dim = Dimension(
+        name="region", kind="category", categories=(Category("W"),)
+    )
+    col_cats = tuple(Category(f"c{i}") for i in range(n))
+    col_dim = Dimension(name="c", kind="category", categories=col_cats)
+    row_leaf = Node(path=(Category("W"),), depth=1, span=1, role="data")
+    row_tree = Node(path=(), depth=0, span=1, role="data", children=(row_leaf,))
+    col_leaves = tuple(
+        Node(path=(c,), depth=1, span=1, role="data") for c in col_cats
+    )
+    col_tree = Node(path=(), depth=0, span=n, role="data", children=col_leaves)
+    return Table(
+        row_axis=Axis(dims=(row_dim,), tree=row_tree),
+        col_axis=Axis(dims=(col_dim,), tree=col_tree),
+        body=np.array([body], dtype=np.float64),
+        missing=np.array([missing_codes], dtype=np.uint8),
+        value_kinds=kinds,
+        formats=formats,
+    )
+
+
+class TestMissingReasonDispatch:
+    """Per-cell dispatch on MissingReason matches the memo's table:
+    PRESENT → numeric, EMPTY → blank, others → text markers."""
+
+    def _render(self, table, tmp_path):
+        openpyxl = pytest.importorskip("openpyxl")
+        path = tmp_path / "missing.xlsx"
+        render_excel(table, path)
+        return openpyxl.load_workbook(path).active
+
+    def test_present_cell_writes_numeric_value(self, tmp_path: pathlib.Path):
+        from proctab.model import MissingReason
+        table = _one_row_table_with_missing(
+            [42.5], [int(MissingReason.PRESENT)]
+        )
+        ws = self._render(table, tmp_path)
+        bs = _body_start(table)
+        cell = ws.cell(row=bs, column=2)
+        assert cell.value == 42.5
+        assert isinstance(cell.value, float)
+
+    def test_empty_cell_writes_no_value(self, tmp_path: pathlib.Path):
+        from proctab.model import MissingReason
+        table = _one_row_table_with_missing(
+            [0.0], [int(MissingReason.EMPTY)]
+        )
+        ws = self._render(table, tmp_path)
+        bs = _body_start(table)
+        assert ws.cell(row=bs, column=2).value is None
+
+    def test_not_applicable_writes_em_dash(self, tmp_path: pathlib.Path):
+        from proctab.model import MissingReason
+        table = _one_row_table_with_missing(
+            [0.0], [int(MissingReason.NOT_APPLICABLE)]
+        )
+        ws = self._render(table, tmp_path)
+        bs = _body_start(table)
+        assert ws.cell(row=bs, column=2).value == "—"
+
+    def test_suppressed_writes_three_stars(self, tmp_path: pathlib.Path):
+        from proctab.model import MissingReason
+        table = _one_row_table_with_missing(
+            [0.0], [int(MissingReason.SUPPRESSED)]
+        )
+        ws = self._render(table, tmp_path)
+        bs = _body_start(table)
+        assert ws.cell(row=bs, column=2).value == "***"
+
+    def test_null_writes_middle_dot(self, tmp_path: pathlib.Path):
+        from proctab.model import MissingReason
+        table = _one_row_table_with_missing(
+            [0.0], [int(MissingReason.NULL)]
+        )
+        ws = self._render(table, tmp_path)
+        bs = _body_start(table)
+        assert ws.cell(row=bs, column=2).value == "·"
+
+    def test_each_cell_carries_number_format(self, tmp_path: pathlib.Path):
+        # Even text-markers and blanks carry number_format so the
+        # column's format is consistent if a user types a value in.
+        from proctab.model import MissingReason
+        table = _one_row_table_with_missing(
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [
+                int(MissingReason.PRESENT),
+                int(MissingReason.EMPTY),
+                int(MissingReason.NOT_APPLICABLE),
+                int(MissingReason.SUPPRESSED),
+                int(MissingReason.NULL),
+            ],
+            formats=("{:,.2f}",) * 5,
+            kinds=("mean",) * 5,
+        )
+        ws = self._render(table, tmp_path)
+        bs = _body_start(table)
+        for col in range(2, 7):
+            assert ws.cell(row=bs, column=col).number_format == "#,##0.00"
+
+
+class TestTbodyValueKindFormats:
+    """Numeric format resolution for each `value_kind` reaches the cell
+    via `_resolve_excel_format`. Spot-check with example_5_customized
+    (currency revenue column, `{:.0f}` style format)."""
+
+    def test_currency_column_uses_currency_code(self, tmp_path: pathlib.Path):
+        # example_5_customized: 4 currency cols with formats="${:,.0f}" →
+        # resolver returns "$#,##0".
+        table = example_5_customized()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # First body row's first body cell carries the currency format.
+        assert ws.cell(row=bs, column=2).number_format == "$#,##0"
+
+    def test_currency_values_are_numeric(self, tmp_path: pathlib.Path):
+        table = example_5_customized()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # First currency cell should be numeric (not text-formatted).
+        v = ws.cell(row=bs, column=2).value
+        assert isinstance(v, (int, float))

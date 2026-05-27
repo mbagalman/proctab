@@ -4,7 +4,8 @@ v0.1: single default theme, single sheet, written to a path on disk via
 openpyxl. See docs/EXCEL_RENDERER.md for the locked design memo.
 
 Current state: E1 (format resolver + sheet-name validator) + E2 (column
-headers, with merged cells for interior nodes). E3-E7 add body content,
+headers, with merged cells for interior nodes) + E3 (body cells with
+MissingReason dispatch and number-format application). E4-E7 add
 caption/source/footnote, default styling, frozen pane / widths, and the
 Table method wiring. openpyxl is an optional extra — install via
 `pip install proctab[excel]`. The function-level entry point and the
@@ -19,6 +20,7 @@ from dataclasses import dataclass
 
 from proctab.model import (
     Category,
+    MissingReason,
     Node,
     SubtotalMarker,
     Table,
@@ -163,6 +165,15 @@ def _nodes_at_depth(root: Node, depth: int) -> list[Node]:
     return out
 
 
+def _walk_nonroot(node: Node):
+    """Pre-order traversal yielding every non-root node (interior + leaf)."""
+    if node.depth > 0:
+        yield node
+    if node.children is not None:
+        for child in node.children:
+            yield from _walk_nonroot(child)
+
+
 def _node_label(node: Node) -> str:
     if node.label is not None:
         return node.label
@@ -208,6 +219,75 @@ def _write_thead(ws, col_axis, layout: _Layout) -> None:
                     end_row=row, end_column=col + node.span - 1,
                 )
             col += node.span
+
+
+# ---------------------------------------------------------------------------
+# E3 — Body rendering.
+# ---------------------------------------------------------------------------
+
+
+_MISSING_TEXT: dict[int, str] = {
+    int(MissingReason.NOT_APPLICABLE): "—",   # em dash
+    int(MissingReason.SUPPRESSED):     "***",
+    int(MissingReason.NULL):           "·",   # middle dot
+}
+"""Display text for non-PRESENT cells (text cells written to Excel).
+PRESENT writes a numeric value; EMPTY leaves the cell unwritten."""
+
+
+def _write_tbody(ws, table: Table, layout: _Layout) -> int:
+    """Write body rows starting at `layout.body_start`.
+
+    Pre-orders the row tree: interior nodes emit a single label cell
+    at column A (body columns left blank, per the locked memo); leaves
+    emit the label at column A plus one cell per col leaf in
+    `B..{last_body_col}`.
+
+    Each body cell:
+    - Sets `number_format` via `_resolve_excel_format(formats[j],
+      value_kinds[j])` so explicit `Table.formats[j]` translations
+      (e.g., `freq()`'s `"{:.1f}%"` → `'0.0"%"'`) carry through.
+    - Sets `value` per `MissingReason`: PRESENT → `float(body[i,j])`;
+      EMPTY → None (cell stays unset); NOT_APPLICABLE / SUPPRESSED /
+      NULL → the literal display marker (`—`, `***`, `·`).
+
+    Returns `body_end` — the row number of the last body row written
+    (or `body_start - 1` if no rows were emitted), for E4 to anchor
+    the source/footnote rows.
+    """
+    present_code = int(MissingReason.PRESENT)
+    empty_code = int(MissingReason.EMPTY)
+
+    row = layout.body_start
+    leaf_idx = 0
+    body_end = layout.body_start - 1  # if no body rows emitted
+
+    for node in _walk_nonroot(table.row_axis.tree):
+        ws.cell(row=row, column=1, value=_node_label(node))
+
+        if node.children is None:
+            for j in range(layout.n_col_leaves):
+                col = 2 + j
+                cell = ws.cell(row=row, column=col)
+                cell.number_format = _resolve_excel_format(
+                    table.formats[j], table.value_kinds[j]
+                )
+
+                missing_code = int(table.missing[leaf_idx, j])
+                if missing_code == present_code:
+                    cell.value = float(table.body[leaf_idx, j])
+                elif missing_code == empty_code:
+                    pass  # leave value=None — cell stays blank
+                else:
+                    cell.value = _MISSING_TEXT[missing_code]
+
+            leaf_idx += 1
+        # Interior (group) row: column A label only; B..N left blank.
+
+        body_end = row
+        row += 1
+
+    return body_end
 
 
 # ---------------------------------------------------------------------------
@@ -266,5 +346,6 @@ def render_excel(
     )
 
     _write_thead(ws, table.col_axis, layout)
+    _write_tbody(ws, table, layout)
 
     wb.save(path)
