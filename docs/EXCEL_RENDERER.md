@@ -148,7 +148,7 @@ Key positions:
 | Body                         | `body_start .. body_end`                   | `A` row labels; `B..` body cells |
 | (blank spacer if footer)     | `body_end + 1`                             | — |
 | Source (if `meta.source`)    | `body_end + 2`                             | `A..{last_body_col}` merged |
-| Footnotes (if any)           | `body_end + 3 .. body_end + 2 + len(footnotes)` | `A..{last_body_col}` merged |
+| Footnotes (if any)           | starting at `body_end + 2 + (1 if source else 0)` | `A..{last_body_col}` merged |
 
 The row-label column is always column A. Body data starts at column B.
 
@@ -172,13 +172,16 @@ analogous to the HTML renderer's `aria-hidden` corner.
 
 ### Source and footnotes
 
+- The footer block starts at `body_end + 2` (after a blank spacer at
+  `body_end + 1`).
 - `source` → cell at column A on row `body_end + 2`, prefixed
   `"Source: "`, **merged across `A..{last_body_col}`**, smaller font,
   thin top border, left-aligned, wrap enabled.
-- `footnotes` → one row per footnote starting at row `body_end + 3`,
-  **merged across `A..{last_body_col}`** with the same styling as
-  source minus the top border (only the first row of the footer block
-  carries the separator).
+- `footnotes` → one row per footnote, **merged across
+  `A..{last_body_col}`** with the same styling as source minus the
+  top border. First footnote sits at `body_end + 3` when `source` is
+  present; at `body_end + 2` when `source` is absent (taking the
+  first-tfoot-row slot — and the top border that goes with it).
 
 Merging is required so executive notes longer than column A's ~40-char
 cap don't get visually clipped. Wrap is enabled so multi-line notes
@@ -474,11 +477,13 @@ memo locks.
    from E1 (translate `formats[j]` if known, else per-kind default).
 4. **E4.** Title + source + footnotes. Title at row 1 merged
    `A1:{last_body_col}1` (bold, font +2); blank spacer at row 2.
-   Source row at `body_end + 2` merged `A..{last_body_col}` with thin
-   top border and wrap enabled; footnote rows from `body_end + 3` with
-   the same merging + wrap, smaller font, no top border (only the
-   first footer row carries the separator). All optional based on
-   `meta.get("title" / "source" / "footnotes")`. Uses the
+   The footer block starts at `body_end + 2` (after a blank spacer at
+   `body_end + 1`): source row first if present (prefixed
+   `"Source: "`, merged, thin top border, wrap enabled), then
+   footnote rows (same merging + wrap, smaller font, no top border).
+   Only the first footer row carries the top border; if no source is
+   present, the first footnote takes that slot. All optional based
+   on `meta.get("title" / "source" / "footnotes")`. Uses the
    [row-position variables](#row-position-variables) from E2.
 5. **E5.** Default styling — apply openpyxl `Font` / `Border` /
    `Alignment` objects per the role/missing rules in

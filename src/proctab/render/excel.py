@@ -3,15 +3,16 @@
 v0.1: single default theme, single sheet, written to a path on disk via
 openpyxl. See docs/EXCEL_RENDERER.md for the locked design memo.
 
-Current state: E1 (format resolver + sheet-name validator) + E2 (column
-headers, with merged cells for interior nodes) + E3 (body cells with
-MissingReason dispatch and number-format application) + E4 (title at
-row 1; source/footnote rows after the body, merged across body cols
-with wrap) + E5 (default theme — Font/Border/Alignment per role/missing
-modifier composed from a single source-of-truth registry, analogous to
-the HTML renderer's `_STYLE_BY_CLASS`) + E6 (frozen pane at
-`B{body_start}`, column A width sized to the longest row label capped at
-40, body columns at default width 12). E7 wires the Table method. openpyxl is an optional extra — install via
+Current state: complete (E1–E8). Format resolution (E1), sheet-name
+validation (E1), column header rendering with merged interior nodes
+(E2), body cells with MissingReason dispatch and per-cell number
+formats (E3), title + source/footnote rows merged across body
+columns with wrap (E4), default theme via a single source-of-truth
+`_STYLE_REGISTRY` analogous to HTML's `_STYLE_BY_CLASS` (E5), frozen
+pane + column widths (E6), and the `Table.to_excel` method wiring
+(E7). Test coverage (E8) lives in `tests/test_excel_render.py` and
+reopens every rendered `.xlsx` to walk cells, merged ranges, styles,
+and freeze-pane state directly. openpyxl is an optional extra — install via
 `pip install proctab[excel]`. The function-level entry point and the
 Table method both lazy-import openpyxl, so `import proctab` works in
 environments without it.
@@ -579,9 +580,14 @@ def render_excel(
 ) -> None:
     """Render a `Table` to an `.xlsx` file at `path`.
 
-    Current state: writes a workbook with the column-header band (E2).
-    E3-E6 add body, caption/source/footnote, default styling, and the
-    frozen pane / column widths.
+    Writes a single sheet containing (in order): optional title at
+    row 1, column headers (with merged interior nodes), body rows
+    (with MissingReason dispatch and number formats), optional source
+    and footnote rows. Applies the default theme (Font / Border /
+    Alignment per role + modifier), sets column widths, and freezes
+    the title + header band + the row-label column. See
+    docs/EXCEL_RENDERER.md for the locked layout, format-code, and
+    styling contracts.
 
     `sheet` becomes the worksheet name; must satisfy Excel's rules
     (1-31 characters, no `\\ / ? * [ ] :`). Violations raise
