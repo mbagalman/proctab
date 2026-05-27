@@ -44,7 +44,7 @@ First release someone might actually try. Each feature gets a design memo before
 - [x] **T6.** Public `tabulate()` — wire spec → wrap → aggregate → axes → Table
 - [x] **T7.** Integration tests against a new `example_2_tabulate_v01()` fixture (structurally identical to existing `example_2_tabulate` but substituting `mean` for `weighted_mean` on margin; original stays as "future target"); pandas + polars
 - [x] **T8.** Edge-case tests — dim caps (3+ rows, 2+ cols), unknown stat name, empty `values`, innermost-dim subtotal, reserved kwargs, empty df, null grouping cols + dropna both ways, `observed=False` + `levels=`, all-null value column (verifies the `NULL` vs `EMPTY` distinction)
-- [ ] **T9.** Guard against synthetic-dim name collisions: `_parse_tabulate_args` must reject any user column named `_metric` or `_stat` with a clear error (these are reserved as internal col-axis dim names per [TABULATE_API.md](docs/TABULATE_API.md)). Add unit tests in `tests/test_tabulate_spec.py`.
+- [x] **T9.** Guard against synthetic-dim name collisions: `_parse_tabulate_args` must reject any user column named `_metric` or `_stat` with a clear error (these are reserved as internal col-axis dim names per [TABULATE_API.md](docs/TABULATE_API.md)). Add unit tests in `tests/test_tabulate_spec.py`.
 
 ### HTML renderer
 

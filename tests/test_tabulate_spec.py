@@ -394,3 +394,88 @@ class TestKwargDefaults:
         assert spec.levels == {"quarter": ["Q1", "Q2"]}
         assert spec.label == {"quarter": "Q"}
         assert spec.subtotals == ("region",)
+
+
+class TestReservedSyntheticDimNames:
+    """T9: reject user columns named `_metric` or `_stat`.
+
+    Both names are reserved as internal col-axis dim names produced
+    by tabulate() — see TABULATE_API.md. A user column with those
+    exact names would collide with the synthetic dims when the
+    output Table's col tree is built.
+    """
+
+    def test_rows_single_metric_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_tabulate_args(rows="_metric", values={"r": "sum"})
+
+    def test_rows_single_stat_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_tabulate_args(rows="_stat", values={"r": "sum"})
+
+    def test_rows_list_with_reserved_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_tabulate_args(
+                rows=["region", "_metric"], values={"r": "sum"}
+            )
+
+    def test_cols_with_reserved_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_tabulate_args(
+                rows="region", cols="_metric", values={"r": "sum"}
+            )
+
+    def test_cols_list_with_reserved_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_tabulate_args(
+                rows="region", cols=["_stat"], values={"r": "sum"}
+            )
+
+    def test_values_metric_named_metric_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_tabulate_args(rows="region", values={"_metric": "sum"})
+
+    def test_values_metric_named_stat_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_tabulate_args(rows="region", values={"_stat": "sum"})
+
+    def test_error_message_identifies_arg_name(self):
+        # rows= violation must mention rows= so the user knows where to look.
+        with pytest.raises(ValueError, match=r"rows= contains reserved"):
+            _parse_tabulate_args(rows="_metric", values={"r": "sum"})
+        with pytest.raises(ValueError, match=r"cols= contains reserved"):
+            _parse_tabulate_args(
+                rows="region", cols="_metric", values={"r": "sum"}
+            )
+        with pytest.raises(ValueError, match=r"values= contains reserved"):
+            _parse_tabulate_args(rows="region", values={"_metric": "sum"})
+
+    def test_error_message_suggests_rename(self):
+        with pytest.raises(ValueError, match=r"rename"):
+            _parse_tabulate_args(rows="_metric", values={"r": "sum"})
+
+    def test_rows_check_fires_before_cols_check_when_both_offend(self):
+        # Determinism: when both rows and cols are bad, the rows error
+        # fires first (matches normalization order). Caller fixes one
+        # thing at a time.
+        with pytest.raises(ValueError, match=r"rows= contains reserved"):
+            _parse_tabulate_args(
+                rows="_metric", cols="_stat", values={"r": "sum"}
+            )
+
+    def test_legitimate_names_still_pass(self):
+        # Control: similar-but-not-reserved names work fine.
+        spec = _parse_tabulate_args(
+            rows="metric", cols="stat",  # no leading underscore
+            values={"metrics_value": "sum"},
+        )
+        assert spec.rows == ("metric",)
+        assert spec.cols == ("stat",)
+        assert spec.values_spec == (("metrics_value", "sum"),)
+
+    def test_underscore_only_in_other_position_is_not_reserved(self):
+        # `region_metric` ≠ `_metric`. Reserved set is exact-match only.
+        spec = _parse_tabulate_args(
+            rows="region_metric", values={"r": "sum"}
+        )
+        assert spec.rows == ("region_metric",)

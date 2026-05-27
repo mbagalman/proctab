@@ -79,6 +79,32 @@ that pairing.
 """
 
 
+_RESERVED_DIM_NAMES = frozenset({"_metric", "_stat"})
+"""Synthetic col-axis dim names produced internally by `tabulate()`.
+User columns with these exact names would collide with the synthetic
+dims when the col tree is built (`(user cols, _metric, _stat)` per
+TABULATE_API.md), so `_parse_tabulate_args` rejects them up front."""
+
+
+def _reject_reserved_names(names, *, arg_name: str) -> None:
+    """Raise if any user-supplied dim name in `names` is reserved.
+
+    Reserved names are `_metric` and `_stat` — see TABULATE_API.md's
+    col-axis structure. Caller passes the kwarg name (`"rows"`,
+    `"cols"`, `"values"`) so the error points at the offending input.
+    """
+    offenders = sorted({n for n in names if n in _RESERVED_DIM_NAMES})
+    if offenders:
+        raise ValueError(
+            f"tabulate() {arg_name}= contains reserved synthetic-dim "
+            f"name(s): {offenders}. '_metric' and '_stat' are reserved "
+            f"for tabulate()'s internal col-axis dim names. Rename the "
+            f"source column(s) (e.g., "
+            f"df = df.rename(columns={{'_metric': 'metric_id'}})) "
+            f"before calling tabulate()."
+        )
+
+
 @dataclass(frozen=True)
 class TabSpec:
     """Parsed and validated `tabulate()` arguments. Internal — not part
@@ -138,8 +164,10 @@ def _parse_tabulate_args(
 
     rows_t = _normalize_dim_list(rows, arg_name="rows",
                                  min_count=1, max_count=2)
+    _reject_reserved_names(rows_t, arg_name="rows")
     cols_t = _normalize_dim_list(cols, arg_name="cols",
                                  min_count=0, max_count=1)
+    _reject_reserved_names(cols_t, arg_name="cols")
 
     overlap = set(rows_t) & set(cols_t)
     if overlap:
@@ -149,6 +177,9 @@ def _parse_tabulate_args(
         )
 
     values_spec = _normalize_values(values)
+    _reject_reserved_names(
+        {metric for metric, _stat in values_spec}, arg_name="values"
+    )
     subtotals_t = _normalize_subtotals(subtotals, rows_t)
 
     grouping_keys = set(rows_t) | set(cols_t)
