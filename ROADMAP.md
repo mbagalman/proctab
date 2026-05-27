@@ -44,6 +44,7 @@ First release someone might actually try. Each feature gets a design memo before
 - [x] **T6.** Public `tabulate()` — wire spec → wrap → aggregate → axes → Table
 - [x] **T7.** Integration tests against a new `example_2_tabulate_v01()` fixture (structurally identical to existing `example_2_tabulate` but substituting `mean` for `weighted_mean` on margin; original stays as "future target"); pandas + polars
 - [x] **T8.** Edge-case tests — dim caps (3+ rows, 2+ cols), unknown stat name, empty `values`, innermost-dim subtotal, reserved kwargs, empty df, null grouping cols + dropna both ways, `observed=False` + `levels=`, all-null value column (verifies the `NULL` vs `EMPTY` distinction)
+- [ ] **T9.** Guard against synthetic-dim name collisions: `_parse_tabulate_args` must reject any user column named `_metric` or `_stat` with a clear error (these are reserved as internal col-axis dim names per [TABULATE_API.md](docs/TABULATE_API.md)). Add unit tests in `tests/test_tabulate_spec.py`.
 
 ### HTML renderer
 
@@ -74,6 +75,7 @@ First release someone might actually try. Each feature gets a design memo before
 - [ ] PyPI name reservation (after final name is chosen)
 - [ ] User-facing `README.md`
 - [ ] License decision (MIT vs Apache 2.0)
+- [ ] Expand `pyproject.toml` metadata before first PyPI release: `readme = "README.md"`, `license`, `keywords`, `classifiers`, `urls` (Homepage, Repository, Issues). Some entries depend on the name + license decisions.
 - [ ] Documentation site (mkdocs-material likely)
 - [ ] DataFrame export: `Table.to_pandas()` / `Table.to_polars()` (long format per [TABLE_MODEL.md#dataframe-export](docs/TABLE_MODEL.md#dataframe-export))
 
@@ -89,6 +91,8 @@ First release someone might actually try. Each feature gets a design memo before
 - [ ] Wide-format DataFrame export
 - [ ] Cell suppression policies (privacy thresholds; `MissingReason.SUPPRESSED` code is already reserved)
 - [ ] Copy-on-write `.with_footnote()` / `.with_title()` etc.
+- [ ] `values=` ergonomic shorthands for `tabulate()`: accept `values="revenue"` (bare string → `{"revenue": ["sum"]}`), and consider tuple-list form `values=[("revenue", "sum"), ...]` (the latter is already a deferred Open Question in [TABULATE_API.md](docs/TABULATE_API.md#open-questions)).
+- [ ] Optional groupby-result caching in `tabulate()` — multiple groupby passes (data + per-subtotal + grand total) can be expensive on very wide / very deep tables. Investigate reuse without losing the "compute from source" correctness guarantee for non-additive stats.
 
 ## Parked / Maybe Later
 
