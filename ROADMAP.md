@@ -60,10 +60,15 @@ First release someone might actually try. Each feature gets a design memo before
 
 ### Excel renderer
 
-- [ ] Draft design memo: `EXCEL_RENDERER.md`
-- [ ] openpyxl integration
-- [ ] Merged header cells, frozen panes, bold totals
-- [ ] Numeric cells with Excel format codes (per [TABLE_MODEL.md](docs/TABLE_MODEL.md) renderer obligation)
+- [x] Lock design memo: [EXCEL_RENDERER.md](docs/EXCEL_RENDERER.md)
+- [ ] **E1.** Module skeleton + format-resolution helper. Create `src/proctab/render/excel.py` with `render_excel(table, path, *, sheet="Sheet1") -> None` stub and the per-cell format resolver `_resolve_excel_format(fmt, value_kind)` implementing the full priority chain (translate known `formats[j]` patterns → per-`value_kind` default → `"General"`). Add `_validate_sheet_name(name)`. Add `[project.optional-dependencies] excel = ["openpyxl>=3.1"]` to `pyproject.toml`.
+- [ ] **E2.** Column header rendering. Compute the row-position variables (`header_start`, `body_start`, `last_body_col`) once and emit rows `header_start..header_start + H - 1`, with merged cells for interior nodes spanning multiple leaves. Top-left corner blank. Per-role classes drive per-cell styling later.
+- [ ] **E3.** Body rendering — single ticket combining row-tree pre-order and per-cell emission. Interior nodes emit group-header rows (label only, body cols blank); leaves emit row-label + body cells. Cells dispatch on `MissingReason` and apply the format resolver from E1.
+- [ ] **E4.** Title + source + footnotes. Title at row 1 merged `A1:{last_body_col}1` (bold, font +2); spacer row 2. Source row at `body_end + 2` merged `A..{last_body_col}` with thin top border and wrap enabled; footnote rows from `body_end + 3` same merging + wrap, smaller font, no top border (only the first carries the separator). All optional based on `meta.get(...)`. Uses the row-position variables from E2.
+- [ ] **E5.** Default styling — openpyxl `Font` / `Border` / `Alignment` objects per the role/missing rules; single source-of-truth dict mapping role → style, analogous to HTML's `_STYLE_BY_CLASS`.
+- [ ] **E6.** Frozen pane + column widths + sheet name validation. Set `worksheet.freeze_panes = f"B{body_start}"`; col A width from longest label (capped at 40); body cols default 12. Validate `sheet=` per Excel's rules (1–31 chars, no `\ / ? * [ ] :`); raise `ValueError` on violation.
+- [ ] **E7.** Wire `Table.to_excel(path, *, sheet="Sheet1")` to `render_excel`. Lazy-import inside the method; raise `ImportError("Excel export requires openpyxl. Install with `pip install proctab[excel]`.")` when openpyxl is absent.
+- [ ] **E8.** Tests. Reopen the written `.xlsx` via openpyxl and walk cells: title + style; column header values + merged ranges + bottom border; per-cell number formats matching the kind / translation tables; total-row bold + medium top border; total-col medium left border; subtotal italic; freeze pane; sheet name; source/footnote cell positions, merged ranges, wrap; MissingReason text mapping; sheet-name validation errors; missing-openpyxl `ImportError` path. Integration tests render `examples.py` fixtures and reopen the workbooks. Edge cases: empty Table, no title, no source/footnotes, invalid sheet name.
 
 ### Engine-agnostic input
 
