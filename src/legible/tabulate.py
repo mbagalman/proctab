@@ -17,7 +17,16 @@ import narwhals.stable.v1 as nw
 import numpy as np
 
 from legible._categories import is_null, normalize, resolve_categories
-from legible.model import Category, MissingReason
+from legible.model import (
+    Axis,
+    Category,
+    Dimension,
+    MissingReason,
+    Node,
+    SubtotalMarker,
+    TotalMarker,
+    ValueKind,
+)
 
 
 SUPPORTED_STATS: frozenset[str] = frozenset({
@@ -36,6 +45,20 @@ STAT_EXPRS: dict[str, Callable[[str], nw.Expr]] = {
     "max":    lambda col: nw.col(col).max(),
     "median": lambda col: nw.col(col).median(),
 }
+
+
+STAT_DEFAULTS: dict[str, tuple[ValueKind, str]] = {
+    "sum":    ("sum",    "{:,.0f}"),
+    "mean":   ("mean",   "{:,.2f}"),
+    "count":  ("count",  "{:,.0f}"),
+    "min":    ("raw",    "{:,.0f}"),
+    "max":    ("raw",    "{:,.0f}"),
+    "median": ("median", "{:,.2f}"),
+}
+"""Per-stat default `(value_kind, format_string)` pairs from
+TABULATE_API.md's stat table. T5 looks these up per col leaf to populate
+`TabulateAxes.value_kinds` and `.formats`. Keys must stay in sync with
+`SUPPORTED_STATS`."""
 """Maps a v0.1 stat name to a callable that, given a column name, returns
 a narwhals expression suitable for use in `.agg(...)`. All entries are
 NaN-aware by the engine's default semantics:
@@ -989,3 +1012,254 @@ class _SectionView:
 
 
 _SectionLike = Any  # SectionResult or _SectionView; same attribute surface
+
+
+# === T5: axis construction =================================================
+
+
+@dataclass(frozen=True)
+class TabulateAxes:
+    """Row + col Axes for the tabulate() Table, plus per-col-leaf
+    `value_kinds` and `formats` (one entry per leaf, in pre-order).
+
+    Calls `Axis.validate()` on both outputs internally, so T6 can trust
+    the shapes without re-checking.
+    """
+    row_axis: Axis
+    col_axis: Axis
+    value_kinds: tuple[ValueKind, ...]
+    formats: tuple[str | None, ...]
+
+
+def build_tabulate_axes(
+    data_result: AggregateResult, spec: TabSpec,
+) -> TabulateAxes:
+    """Build validated row + col Axes for a tabulate() Table.
+
+    Tree shape per the design memo:
+
+    - **Row axis**: 1-dim → flat data leaves + optional Total leaf.
+      2-dim → for each outer cat, a branch containing inner-cat leaves;
+      then a sibling Subtotal leaf if `spec.subtotals` includes the
+      outer dim; finally a Grand Total leaf (path of all TotalMarkers).
+    - **Col axis**: `user cols → _metric → _stat` hierarchy. Each user
+      col cat becomes a branch containing metric-branches with stat
+      leaves underneath. If `cols=()`, metric branches sit directly
+      under root (no user col dim). A Total col branch (TotalMarker)
+      is appended when `spec.totals AND spec.cols AND n_rows > 0
+      AND n_cols > 0`.
+
+    Leaf pre-order matches T4c's `row_layout` / `col_layout` ordering;
+    body indexing relies on this structural invariant.
+    """
+    n_rows_data = data_result.stat_values.shape[0]
+    n_cols_data = data_result.stat_values.shape[1]
+    has_total_row = bool(spec.totals and n_rows_data > 0)
+    has_total_col = bool(
+        spec.totals and spec.cols
+        and n_rows_data > 0 and n_cols_data > 0
+    )
+
+    row_axis = _build_row_axis(spec, data_result, has_total_row)
+    col_axis = _build_col_axis(spec, data_result, has_total_col)
+
+    row_axis.validate()
+    col_axis.validate()
+
+    value_kinds, formats = _per_col_leaf_metadata(col_axis)
+
+    return TabulateAxes(
+        row_axis=row_axis,
+        col_axis=col_axis,
+        value_kinds=value_kinds,
+        formats=formats,
+    )
+
+
+def _build_row_axis(
+    spec: TabSpec, data_result: AggregateResult, has_total_row: bool,
+) -> Axis:
+    """Multi-dim row tree with optional subtotal/total markers."""
+    n_dims = len(spec.rows)
+
+    dims = tuple(
+        Dimension(
+            name=k, kind="category", categories=cats,
+            label=(spec.label or {}).get(k),
+        )
+        for k, cats in zip(spec.rows, data_result.row_categories)
+    )
+
+    top_children: list[Node] = []
+    subtotal_dim = spec.subtotals[0] if spec.subtotals else None
+
+    if n_dims == 1:
+        for cat in data_result.row_categories[0]:
+            top_children.append(
+                Node(path=(cat,), depth=1, span=1, role="data")
+            )
+    else:
+        # 2-dim row case (v0.1 cap). Outer-only subtotals.
+        outer_cats = data_result.row_categories[0]
+        inner_cats = data_result.row_categories[1]
+        outer_dim_name = spec.rows[0]
+        inner_dim_name = spec.rows[1]
+        is_outer_subtotal = subtotal_dim == outer_dim_name
+
+        for outer_cat in outer_cats:
+            inner_leaves = tuple(
+                Node(path=(outer_cat, inner_cat), depth=2, span=1, role="data")
+                for inner_cat in inner_cats
+            )
+            top_children.append(Node(
+                path=(outer_cat,), depth=1,
+                span=len(inner_leaves),
+                role="data",
+                children=inner_leaves,
+            ))
+            if is_outer_subtotal:
+                top_children.append(Node(
+                    path=(outer_cat, SubtotalMarker(at_dim=inner_dim_name)),
+                    depth=2, span=1, role="subtotal",
+                    label=f"{outer_cat.value} Subtotal",
+                ))
+
+    if has_total_row:
+        total_path = tuple(TotalMarker() for _ in range(n_dims))
+        top_children.append(Node(
+            path=total_path, depth=n_dims, span=1, role="total",
+            label="Grand Total" if n_dims > 1 else "Total",
+        ))
+
+    root = Node(
+        path=(), depth=0,
+        span=sum(c.span for c in top_children),
+        role="data",
+        children=tuple(top_children),
+    )
+    return Axis(dims=dims, tree=root)
+
+
+def _build_col_axis(
+    spec: TabSpec, data_result: AggregateResult, has_total_col: bool,
+) -> Axis:
+    """Col tree: user_cols → _metric → _stat with optional Total branch."""
+    # Dimensions
+    user_dims = tuple(
+        Dimension(
+            name=k, kind="category", categories=cats,
+            label=(spec.label or {}).get(k),
+        )
+        for k, cats in zip(spec.cols, data_result.col_categories)
+    )
+
+    metric_cats = tuple(Category(m) for m in data_result.metric_names)
+    metric_dim = Dimension(name="_metric", kind="metric", categories=metric_cats)
+
+    stat_names = tuple(dict.fromkeys(s for _, s in spec.values_spec))
+    stat_cats = tuple(Category(s) for s in stat_names)
+    stat_dim = Dimension(name="_stat", kind="stat", categories=stat_cats)
+
+    dims = user_dims + (metric_dim, stat_dim)
+
+    # Tree
+    top_children: list[Node] = []
+    if spec.cols:
+        for cat in data_result.col_categories[0]:
+            top_children.append(_col_outer_branch(
+                outer_path=(cat,), outer_role="data", label=None,
+                spec=spec, data_result=data_result,
+            ))
+        if has_total_col:
+            top_children.append(_col_outer_branch(
+                outer_path=(TotalMarker(),), outer_role="total",
+                label="Total",
+                spec=spec, data_result=data_result,
+            ))
+    else:
+        # cols=() → metric branches directly under root
+        top_children = _metric_branches(
+            parent_path=(), parent_role="data",
+            spec=spec, data_result=data_result,
+        )
+
+    root = Node(
+        path=(), depth=0,
+        span=sum(c.span for c in top_children),
+        role="data",
+        children=tuple(top_children),
+    )
+    return Axis(dims=dims, tree=root)
+
+
+def _col_outer_branch(
+    outer_path: tuple,
+    outer_role: str,
+    label: str | None,
+    spec: TabSpec,
+    data_result: AggregateResult,
+) -> Node:
+    """One user-col-cat (or Total) branch containing the metric subtree."""
+    metric_branches = _metric_branches(
+        parent_path=outer_path, parent_role=outer_role,
+        spec=spec, data_result=data_result,
+    )
+    return Node(
+        path=outer_path,
+        depth=len(outer_path),
+        span=sum(b.span for b in metric_branches),
+        role=outer_role,
+        label=label,
+        children=tuple(metric_branches),
+    )
+
+
+def _metric_branches(
+    parent_path: tuple,
+    parent_role: str,
+    spec: TabSpec,
+    data_result: AggregateResult,
+) -> list[Node]:
+    """Per metric (in `data_result.metric_names` order), a branch containing
+    that metric's stat leaves (in `spec.values_spec` order)."""
+    by_metric: dict[str, list[str]] = {}
+    for m, s in spec.values_spec:
+        by_metric.setdefault(m, []).append(s)
+
+    branches: list[Node] = []
+    for metric_name in data_result.metric_names:
+        if metric_name not in by_metric:
+            continue
+        metric_cat = Category(metric_name)
+        stat_leaves = tuple(
+            Node(
+                path=parent_path + (metric_cat, Category(s)),
+                depth=len(parent_path) + 2,
+                span=1,
+                role=parent_role,
+            )
+            for s in by_metric[metric_name]
+        )
+        branches.append(Node(
+            path=parent_path + (metric_cat,),
+            depth=len(parent_path) + 1,
+            span=len(stat_leaves),
+            role=parent_role,
+            children=stat_leaves,
+        ))
+    return branches
+
+
+def _per_col_leaf_metadata(
+    col_axis: Axis,
+) -> tuple[tuple[ValueKind, ...], tuple[str | None, ...]]:
+    """Per col leaf, look up the (value_kind, format) for the stat name
+    at the leaf's last path position."""
+    value_kinds: list[ValueKind] = []
+    formats: list[str | None] = []
+    for leaf in col_axis.leaves():
+        stat_name = leaf.path[-1].value
+        vk, fmt = STAT_DEFAULTS[stat_name]
+        value_kinds.append(vk)
+        formats.append(fmt)
+    return tuple(value_kinds), tuple(formats)
