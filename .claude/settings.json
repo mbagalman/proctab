@@ -28,7 +28,8 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_assemble.py -v)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_axes.py -v)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate.py -v)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_integration.py -v)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_integration.py -v)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_edge_cases.py -v)"
     ],
     "additionalDirectories": [
       "c:\\Users\\micha\\.claude\\projects\\c--Users-micha-Documents-GitHub-Legible\\memory"
