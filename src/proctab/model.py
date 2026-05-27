@@ -325,3 +325,25 @@ class Table:
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
         return None
+
+    def to_excel(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        sheet: str = "Sheet1",
+    ) -> None:
+        """Render to an `.xlsx` file at `path` via openpyxl.
+
+        `sheet` becomes the worksheet name and must satisfy Excel's
+        rules (1-31 characters, no `\\ / ? * [ ] :`); violations raise
+        `ValueError` deterministically — even when openpyxl is absent.
+        See docs/EXCEL_RENDERER.md for the locked layout, format-code,
+        and styling contracts.
+
+        openpyxl is an optional extra. Install via
+        `pip install proctab[excel]`; a missing install raises
+        `ImportError` with that install command in the message.
+        """
+        from proctab.render.excel import render_excel
+
+        render_excel(self, path, sheet=sheet)

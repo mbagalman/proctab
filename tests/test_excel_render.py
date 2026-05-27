@@ -1608,3 +1608,90 @@ class TestEmptyTableE6:
         # Row "W" exists in the row axis even though col axis is empty;
         # _col_a_width still computes from it. Min floor of 8 applies.
         assert ws.column_dimensions["A"].width == 8.0
+
+
+# ---------------------------------------------------------------------------
+# E7 — Table.to_excel method wiring.
+#
+# The render_excel function-level path is exhaustively tested above;
+# these tests focus on the method binding: that to_excel delegates
+# correctly and that the method preserves render_excel's documented
+# error contracts (ValueError for bad sheet names; friendly ImportError
+# when openpyxl is missing).
+# ---------------------------------------------------------------------------
+
+
+class TestTableToExcel:
+    def test_returns_none(self, tmp_path: pathlib.Path):
+        openpyxl = pytest.importorskip("openpyxl")
+        out = example_5_customized().to_excel(tmp_path / "out.xlsx")
+        assert out is None
+
+    def test_writes_file_at_path(self, tmp_path: pathlib.Path):
+        pytest.importorskip("openpyxl")
+        path = tmp_path / "out.xlsx"
+        example_5_customized().to_excel(path)
+        assert path.exists() and path.stat().st_size > 0
+
+    def test_matches_render_excel_output(self, tmp_path: pathlib.Path):
+        # Both paths should produce the same file. The method is a
+        # one-line delegate, so byte-identical output is a fair check.
+        pytest.importorskip("openpyxl")
+        a = tmp_path / "method.xlsx"
+        b = tmp_path / "function.xlsx"
+        example_5_customized().to_excel(a)
+        render_excel(example_5_customized(), b)
+        assert a.read_bytes() == b.read_bytes()
+
+    def test_default_sheet_name(self, tmp_path: pathlib.Path):
+        openpyxl = pytest.importorskip("openpyxl")
+        path = tmp_path / "out.xlsx"
+        example_5_customized().to_excel(path)
+        wb = openpyxl.load_workbook(path)
+        assert wb.sheetnames == ["Sheet1"]
+
+    def test_sheet_kwarg_passes_through(self, tmp_path: pathlib.Path):
+        openpyxl = pytest.importorskip("openpyxl")
+        path = tmp_path / "out.xlsx"
+        example_5_customized().to_excel(path, sheet="Q1 Report")
+        wb = openpyxl.load_workbook(path)
+        assert wb.sheetnames == ["Q1 Report"]
+
+    def test_accepts_string_path(self, tmp_path: pathlib.Path):
+        pytest.importorskip("openpyxl")
+        path = str(tmp_path / "out_str.xlsx")
+        example_5_customized().to_excel(path)
+        assert pathlib.Path(path).exists()
+
+    def test_accepts_pathlib_path(self, tmp_path: pathlib.Path):
+        pytest.importorskip("openpyxl")
+        path = tmp_path / "out_pl.xlsx"
+        example_5_customized().to_excel(path)
+        assert path.exists()
+
+    def test_invalid_sheet_raises_value_error(self, tmp_path: pathlib.Path):
+        pytest.importorskip("openpyxl")
+        path = tmp_path / "should_not_exist.xlsx"
+        with pytest.raises(ValueError, match="reserved"):
+            example_5_customized().to_excel(path, sheet="bad/name")
+        assert not path.exists()
+
+    def test_missing_openpyxl_gives_friendly_error(
+        self, tmp_path: pathlib.Path, monkeypatch
+    ):
+        # Mirror the function-level monkeypatch from TestMissingOpenpyxlError.
+        for name in list(sys.modules):
+            if name == "openpyxl" or name.startswith("openpyxl."):
+                monkeypatch.setitem(sys.modules, name, None)
+
+        original_import = builtins.__import__
+
+        def _no_openpyxl(name, *args, **kwargs):
+            if name == "openpyxl" or name.startswith("openpyxl."):
+                raise ImportError(f"simulated absent: {name}")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_openpyxl)
+
+        with pytest.raises(ImportError, match=r"proctab\[excel\]"):
+            example_5_customized().to_excel(tmp_path / "missing.xlsx")
