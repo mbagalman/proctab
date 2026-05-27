@@ -1,4 +1,4 @@
-"""Tests for the HTML renderer (H1 + H2).
+"""Tests for the HTML renderer (H1 + H2 + H3).
 
 Contract source: docs/HTML_RENDERER.md.
 
@@ -20,11 +20,21 @@ from proctab.examples import (
     example_1b_two_way_freq,
     example_2_tabulate_v01,
 )
-from proctab.render.html import _resolve_format, render_html
+from proctab.model import (
+    Axis,
+    Category,
+    Dimension,
+    MissingReason,
+    Node,
+    SubtotalMarker,
+    Table,
+    TotalMarker,
+)
+from proctab.render.html import _cell_role, _resolve_format, render_html
 
 
 # ---------------------------------------------------------------------------
-# Parsing helpers (will get reused by H3-H8 tests).
+# Parsing helpers (will get reused by H4-H8 tests).
 # ---------------------------------------------------------------------------
 
 
@@ -39,6 +49,12 @@ def _thead_rows(table_el: ET.Element) -> list[ET.Element]:
     return list(thead.findall("tr"))
 
 
+def _tbody_rows(table_el: ET.Element) -> list[ET.Element]:
+    tbody = table_el.find("tbody")
+    assert tbody is not None, "table missing <tbody>"
+    return list(tbody.findall("tr"))
+
+
 def _row_cells(row_el: ET.Element) -> list[ET.Element]:
     return list(row_el)
 
@@ -48,6 +64,22 @@ def _corner(table_el: ET.Element) -> ET.Element:
     first = _row_cells(rows[0])
     assert first, "first <thead> row is empty"
     return first[0]
+
+
+def _row_label_text(row_el: ET.Element) -> str:
+    """Return the text of the first <th> in a row (the row label)."""
+    th = row_el.find("th")
+    assert th is not None, "row missing a row-label <th>"
+    return th.text or ""
+
+
+def _row_class(row_el: ET.Element) -> str:
+    return row_el.get("class") or ""
+
+
+def _td_cells(row_el: ET.Element) -> list[ET.Element]:
+    """Return only <td> elements (skips the row-label <th>)."""
+    return list(row_el.findall("td"))
 
 
 # ---------------------------------------------------------------------------
@@ -328,3 +360,410 @@ class TestColspanContract:
             assert total_span == n_leaves, (
                 f"row {i}: spans sum to {total_span}, expected {n_leaves}"
             )
+
+
+# ---------------------------------------------------------------------------
+# H3 — Body rendering.
+# ---------------------------------------------------------------------------
+
+
+class TestCellRoleHelper:
+    """Cell role precedence: total > subtotal > data, regardless of axis."""
+
+    @pytest.mark.parametrize(
+        "row_role,col_role,expected",
+        [
+            ("data", "data", "data"),
+            ("data", "total", "total"),
+            ("total", "data", "total"),
+            ("total", "total", "total"),
+            ("data", "subtotal", "subtotal"),
+            ("subtotal", "data", "subtotal"),
+            ("subtotal", "subtotal", "subtotal"),
+            ("subtotal", "total", "total"),
+            ("total", "subtotal", "total"),
+        ],
+    )
+    def test_precedence(self, row_role, col_role, expected):
+        assert _cell_role(row_role, col_role) == expected
+
+
+class TestTbodyOneWay:
+    """example_1_one_way_freq: 4 data leaf rows + 1 Total leaf row, no groups."""
+
+    def setup_method(self):
+        self.table = example_1_one_way_freq()
+        self.root = _parse(render_html(self.table))
+        self.rows = _tbody_rows(self.root)
+
+    def test_row_count_matches_leaves(self):
+        n_leaves = len(self.table.row_axis.leaves())
+        assert len(self.rows) == n_leaves
+
+    def test_data_rows_have_proctab_data_class(self):
+        for row in self.rows[:-1]:
+            assert _row_class(row) == "proctab-data"
+
+    def test_total_row_has_proctab_total_class(self):
+        assert _row_class(self.rows[-1]) == "proctab-total"
+
+    def test_label_th_has_scope_row(self):
+        for row in self.rows:
+            th = row.find("th")
+            assert th is not None
+            assert th.get("scope") == "row"
+
+    def test_label_indent_class_is_zero_for_one_dim_axis(self):
+        for row in self.rows:
+            th = row.find("th")
+            cls = th.get("class") or ""
+            assert "proctab-indent-0" in cls
+            assert "proctab-row-label" in cls
+
+    def test_each_data_row_has_n_cells_equal_to_col_leaves(self):
+        n_col_leaves = len(self.table.col_axis.leaves())
+        for row in self.rows:
+            assert len(_td_cells(row)) == n_col_leaves
+
+    def test_data_cells_carry_data_role_class(self):
+        for row in self.rows[:-1]:
+            for td in _td_cells(row):
+                cls = td.get("class") or ""
+                assert "proctab-cell" in cls
+                assert "proctab-data" in cls
+
+    def test_total_row_cells_carry_total_role_class(self):
+        for td in _td_cells(self.rows[-1]):
+            cls = td.get("class") or ""
+            assert "proctab-cell" in cls
+            assert "proctab-total" in cls
+
+    def test_present_cells_carry_data_value_attribute(self):
+        for row in self.rows:
+            for td in _td_cells(row):
+                # All cells in example_1 are PRESENT and finite.
+                assert td.get("data-value") is not None
+
+
+class TestTbodyTabulate:
+    """example_2_tabulate_v01: 2 group headers + 4 data leaves + 2 subtotals + 1 grand total."""
+
+    def setup_method(self):
+        self.table = example_2_tabulate_v01()
+        self.root = _parse(render_html(self.table))
+        self.rows = _tbody_rows(self.root)
+
+    def test_row_count_is_groups_plus_leaves(self):
+        # 2 region groups (E, W) emitted as group-header rows + all leaves.
+        n_leaves = len(self.table.row_axis.leaves())
+        # The row tree has 2 interior non-root nodes (E, W).
+        expected = n_leaves + 2
+        assert len(self.rows) == expected
+
+    def test_group_header_rows_have_group_header_class(self):
+        group_rows = [r for r in self.rows if _row_class(r) == "proctab-group-header"]
+        assert len(group_rows) == 2
+        for r in group_rows:
+            assert _row_label_text(r) in {"E", "W"}
+
+    def test_group_header_has_th_rowgroup_plus_padding_td(self):
+        group_rows = [r for r in self.rows if _row_class(r) == "proctab-group-header"]
+        n_col_leaves = len(self.table.col_axis.leaves())
+        for r in group_rows:
+            ths = r.findall("th")
+            assert len(ths) == 1
+            assert ths[0].get("scope") == "rowgroup"
+            tds = r.findall("td")
+            assert len(tds) == 1
+            assert tds[0].get("colspan") == str(n_col_leaves)
+            assert tds[0].get("class") == "proctab-group-pad"
+
+    def test_group_header_label_indent_is_outer_depth(self):
+        # E and W are at row_axis tree depth 1 → proctab-indent-0
+        group_rows = [r for r in self.rows if _row_class(r) == "proctab-group-header"]
+        for r in group_rows:
+            th = r.find("th")
+            cls = th.get("class") or ""
+            assert "proctab-indent-0" in cls
+
+    def test_data_leaf_rows_have_proctab_data_class(self):
+        data_rows = [r for r in self.rows if _row_class(r) == "proctab-data"]
+        # 4 data leaves: (E,A), (E,B), (W,A), (W,B)
+        assert len(data_rows) == 4
+
+    def test_data_leaf_label_indent_is_inner_depth(self):
+        data_rows = [r for r in self.rows if _row_class(r) == "proctab-data"]
+        for r in data_rows:
+            th = r.find("th")
+            cls = th.get("class") or ""
+            assert "proctab-indent-1" in cls
+
+    def test_subtotal_rows_have_proctab_subtotal_class(self):
+        sub_rows = [r for r in self.rows if _row_class(r) == "proctab-subtotal"]
+        assert len(sub_rows) == 2
+        for r in sub_rows:
+            # Labels were set on examples.py to "E Subtotal" / "W Subtotal".
+            assert "Subtotal" in _row_label_text(r)
+
+    def test_grand_total_row_present_and_last(self):
+        assert _row_class(self.rows[-1]) == "proctab-total"
+        assert _row_label_text(self.rows[-1]) == "Grand Total"
+
+    def test_subtotal_row_cells_in_total_col_are_total_role(self):
+        # Cell role precedence: subtotal row × total col → total.
+        sub_rows = [r for r in self.rows if _row_class(r) == "proctab-subtotal"]
+        col_leaves = self.table.col_axis.leaves()
+        total_col_indices = [j for j, leaf in enumerate(col_leaves) if leaf.role == "total"]
+        assert total_col_indices, "v01 fixture should have at least one total col leaf"
+        for r in sub_rows:
+            tds = _td_cells(r)
+            for j in total_col_indices:
+                cls = tds[j].get("class") or ""
+                assert "proctab-total" in cls
+                assert "proctab-subtotal" not in cls
+
+    def test_subtotal_row_cells_in_data_col_are_subtotal_role(self):
+        sub_rows = [r for r in self.rows if _row_class(r) == "proctab-subtotal"]
+        col_leaves = self.table.col_axis.leaves()
+        data_col_indices = [j for j, leaf in enumerate(col_leaves) if leaf.role == "data"]
+        for r in sub_rows:
+            tds = _td_cells(r)
+            for j in data_col_indices:
+                cls = tds[j].get("class") or ""
+                assert "proctab-subtotal" in cls
+
+    def test_grand_total_row_all_cells_total_role(self):
+        tds = _td_cells(self.rows[-1])
+        for td in tds:
+            cls = td.get("class") or ""
+            assert "proctab-total" in cls
+
+
+# ---------------------------------------------------------------------------
+# Synthetic-fixture helpers for the trickier H3 cases (missing reasons,
+# escaping, non-finite, empty Table).
+# ---------------------------------------------------------------------------
+
+
+def _build_one_row_table(
+    *,
+    body: list[float],
+    missing_codes: list[int],
+    col_labels: list[str] | None = None,
+    row_label: str = "Region",
+    value_kinds: tuple[str, ...] | None = None,
+    formats: tuple[str | None, ...] | None = None,
+) -> Table:
+    """Build a 1-row × N-col Table for missing/escape/finite testing.
+
+    Each col leaf is a top-level data leaf under a single col dim `c`.
+    """
+    n = len(body)
+    if col_labels is None:
+        col_labels = [f"c{i}" for i in range(n)]
+    if value_kinds is None:
+        value_kinds = ("raw",) * n
+    if formats is None:
+        formats = (None,) * n
+
+    row_dim = Dimension(
+        name="region", kind="category", categories=(Category(row_label),)
+    )
+    col_cats = tuple(Category(lab) for lab in col_labels)
+    col_dim = Dimension(name="c", kind="category", categories=col_cats)
+
+    row_leaf = Node(
+        path=(Category(row_label),), depth=1, span=1, role="data", label=row_label
+    )
+    row_tree = Node(path=(), depth=0, span=1, role="data", children=(row_leaf,))
+    row_axis = Axis(dims=(row_dim,), tree=row_tree)
+
+    col_leaves = tuple(
+        Node(path=(c,), depth=1, span=1, role="data", label=str(c.value))
+        for c in col_cats
+    )
+    col_tree = Node(path=(), depth=0, span=n, role="data", children=col_leaves)
+    col_axis = Axis(dims=(col_dim,), tree=col_tree)
+
+    return Table(
+        row_axis=row_axis,
+        col_axis=col_axis,
+        body=np.array([body], dtype=np.float64),
+        missing=np.array([missing_codes], dtype=np.uint8),
+        value_kinds=value_kinds,
+        formats=formats,
+    )
+
+
+class TestMissingReasonRendering:
+    """Each MissingReason renders its locked display text + class suffix."""
+
+    @pytest.fixture
+    def table(self):
+        return _build_one_row_table(
+            body=[1.0, 2.0, 3.0, 4.0],
+            missing_codes=[
+                int(MissingReason.EMPTY),
+                int(MissingReason.NOT_APPLICABLE),
+                int(MissingReason.SUPPRESSED),
+                int(MissingReason.NULL),
+            ],
+            col_labels=["empty", "na", "supp", "null"],
+        )
+
+    def test_empty_cell_text_is_empty_string(self, table):
+        tds = _td_cells(_tbody_rows(_parse(render_html(table)))[0])
+        assert (tds[0].text or "") == ""
+
+    def test_not_applicable_cell_text_is_em_dash(self, table):
+        tds = _td_cells(_tbody_rows(_parse(render_html(table)))[0])
+        assert tds[1].text == "—"
+
+    def test_suppressed_cell_text_is_three_stars(self, table):
+        tds = _td_cells(_tbody_rows(_parse(render_html(table)))[0])
+        assert tds[2].text == "***"
+
+    def test_null_cell_text_is_middle_dot(self, table):
+        tds = _td_cells(_tbody_rows(_parse(render_html(table)))[0])
+        assert tds[3].text == "·"
+
+    def test_missing_class_suffixes(self, table):
+        tds = _td_cells(_tbody_rows(_parse(render_html(table)))[0])
+        cls = [td.get("class") or "" for td in tds]
+        assert "proctab-missing-empty" in cls[0]
+        assert "proctab-missing-not-applicable" in cls[1]
+        assert "proctab-missing-suppressed" in cls[2]
+        assert "proctab-missing-null" in cls[3]
+
+    def test_missing_cells_carry_role_class_too(self, table):
+        # Memo: non-PRESENT cells also get the role class (additive).
+        tds = _td_cells(_tbody_rows(_parse(render_html(table)))[0])
+        for td in tds:
+            cls = td.get("class") or ""
+            assert "proctab-cell" in cls
+            assert "proctab-data" in cls
+
+    def test_missing_cells_skip_data_value(self, table):
+        tds = _td_cells(_tbody_rows(_parse(render_html(table)))[0])
+        for td in tds:
+            assert td.get("data-value") is None
+
+
+class TestDataValueAttribute:
+    """data-value uses '.17g' for finite-PRESENT; omitted for non-finite/missing."""
+
+    def test_finite_present_emits_data_value(self):
+        table = _build_one_row_table(
+            body=[42.5],
+            missing_codes=[int(MissingReason.PRESENT)],
+            col_labels=["x"],
+        )
+        td = _td_cells(_tbody_rows(_parse(render_html(table)))[0])[0]
+        assert td.get("data-value") == "42.5"
+
+    def test_data_value_uses_17g_precision(self):
+        # 0.1 is not exactly representable; .17g preserves round-trippability.
+        table = _build_one_row_table(
+            body=[0.1],
+            missing_codes=[int(MissingReason.PRESENT)],
+            col_labels=["x"],
+        )
+        td = _td_cells(_tbody_rows(_parse(render_html(table)))[0])[0]
+        raw = td.get("data-value")
+        assert raw == format(0.1, ".17g")
+        # Round-trip check: parsing the attr back gives the exact same float.
+        assert float(raw) == 0.1
+
+    def test_nan_present_omits_data_value(self):
+        table = _build_one_row_table(
+            body=[float("nan")],
+            missing_codes=[int(MissingReason.PRESENT)],
+            col_labels=["x"],
+        )
+        td = _td_cells(_tbody_rows(_parse(render_html(table)))[0])[0]
+        assert td.get("data-value") is None
+
+    def test_inf_present_omits_data_value(self):
+        table = _build_one_row_table(
+            body=[float("inf")],
+            missing_codes=[int(MissingReason.PRESENT)],
+            col_labels=["x"],
+        )
+        td = _td_cells(_tbody_rows(_parse(render_html(table)))[0])[0]
+        assert td.get("data-value") is None
+
+
+class TestHtmlEscaping:
+    """HTML-sensitive characters in labels and formatted values are escaped."""
+
+    def test_column_label_with_ampersand(self):
+        table = _build_one_row_table(
+            body=[1.0],
+            missing_codes=[int(MissingReason.PRESENT)],
+            col_labels=["A&B"],
+        )
+        out = render_html(table)
+        root = _parse(out)
+        # Parse-back yields the original character; raw output is escaped.
+        col_th = _thead_rows(root)[0].findall("th")[1]
+        assert col_th.text == "A&B"
+        assert "&amp;" in out
+
+    def test_column_label_with_angle_brackets(self):
+        table = _build_one_row_table(
+            body=[1.0],
+            missing_codes=[int(MissingReason.PRESENT)],
+            col_labels=["<x>"],
+        )
+        out = render_html(table)
+        root = _parse(out)
+        col_th = _thead_rows(root)[0].findall("th")[1]
+        assert col_th.text == "<x>"
+        assert "&lt;x&gt;" in out
+
+    def test_row_label_with_special_chars(self):
+        table = _build_one_row_table(
+            body=[1.0],
+            missing_codes=[int(MissingReason.PRESENT)],
+            col_labels=["x"],
+            row_label="Q1 & Q2",
+        )
+        out = render_html(table)
+        root = _parse(out)
+        row_th = _tbody_rows(root)[0].find("th")
+        assert row_th.text == "Q1 & Q2"
+        assert "&amp;" in out
+
+
+class TestEmptyTable:
+    """Empty Table emits <thead> with just the corner cell and an empty <tbody>."""
+
+    def _empty(self) -> Table:
+        empty_dim = Dimension(name="x", kind="category", categories=())
+        empty_tree = Node(path=(), depth=0, span=0, role="data", children=())
+        empty_axis = Axis(dims=(empty_dim,), tree=empty_tree)
+        return Table(
+            row_axis=empty_axis,
+            col_axis=empty_axis,
+            body=np.empty((0, 0), dtype=np.float64),
+            missing=np.empty((0, 0), dtype=np.uint8),
+            value_kinds=(),
+            formats=(),
+        )
+
+    def test_parses_as_well_formed(self):
+        _parse(render_html(self._empty()))
+
+    def test_has_thead_with_corner_only(self):
+        root = _parse(render_html(self._empty()))
+        rows = _thead_rows(root)
+        # Single header row, single corner cell.
+        assert len(rows) == 1
+        cells = _row_cells(rows[0])
+        assert len(cells) == 1
+        assert cells[0].get("class") == "proctab-corner"
+
+    def test_tbody_is_empty(self):
+        root = _parse(render_html(self._empty()))
+        rows = _tbody_rows(root)
+        assert rows == []

@@ -3,27 +3,33 @@
 v0.1: single default theme, two output modes (fragment / standalone).
 See docs/HTML_RENDERER.md for the locked design memo.
 
-Current state: H1 (format resolver) + H2 (column header rendering).
-H3-H7 will add body rendering, caption/tfoot, default styling, the
-standalone wrapper, and the `Table._repr_html_` / `Table.to_html`
-method wiring.
+Current state: H1 (format resolver) + H2 (column headers) + H3 (body).
+H4-H7 will add caption/tfoot, default styling, the standalone wrapper,
+and the `Table._repr_html_` / `Table.to_html` method wiring.
 """
 
 from __future__ import annotations
 
 import html as _html
+import math
 
 import numpy as np
 
 from proctab.model import (
     Axis,
     Category,
+    MissingReason,
     Node,
     SubtotalMarker,
     Table,
     TotalMarker,
     ValueKind,
 )
+
+
+# ---------------------------------------------------------------------------
+# H1 — Format resolver.
+# ---------------------------------------------------------------------------
 
 
 _KIND_DEFAULTS: dict[str, str] = {
@@ -64,6 +70,11 @@ def _resolve_format(value: object, fmt: str | None, value_kind: ValueKind) -> st
     return spec.format(value)
 
 
+# ---------------------------------------------------------------------------
+# Shared tree-walking + label helpers.
+# ---------------------------------------------------------------------------
+
+
 def _nodes_at_depth(root: Node, depth: int) -> list[Node]:
     if root.depth == depth:
         return [root]
@@ -75,7 +86,15 @@ def _nodes_at_depth(root: Node, depth: int) -> list[Node]:
     return out
 
 
-def _col_header_label(node: Node) -> str:
+def _walk_nonroot(node: Node):
+    if node.depth > 0:
+        yield node
+    if node.children is not None:
+        for child in node.children:
+            yield from _walk_nonroot(child)
+
+
+def _node_label(node: Node) -> str:
     if node.label is not None:
         return node.label
     if not node.path:
@@ -88,6 +107,11 @@ def _col_header_label(node: Node) -> str:
     if isinstance(el, SubtotalMarker):
         return f"{el.at_dim} Subtotal"
     return ""
+
+
+# ---------------------------------------------------------------------------
+# H2 — Column header rendering.
+# ---------------------------------------------------------------------------
 
 
 def _col_header_class(node: Node) -> str:
@@ -104,7 +128,7 @@ def _corner_th(n_header_rows: int) -> str:
 
 
 def _col_th(node: Node, *, is_innermost: bool) -> str:
-    text = _html.escape(_col_header_label(node))
+    text = _html.escape(_node_label(node))
     scope = "col" if is_innermost else "colgroup"
     colspan = f' colspan="{node.span}"' if node.span > 1 else ""
     cls = _col_header_class(node)
@@ -141,13 +165,153 @@ def _render_thead(col_axis: Axis) -> str:
     return f"  <thead>\n{inner}\n  </thead>"
 
 
+# ---------------------------------------------------------------------------
+# H3 — Body rendering.
+# ---------------------------------------------------------------------------
+
+
+_ROLE_RANK = {"data": 0, "subtotal": 1, "total": 2}
+
+_MISSING_SUFFIX: dict[int, str] = {
+    int(MissingReason.EMPTY): "empty",
+    int(MissingReason.NOT_APPLICABLE): "not-applicable",
+    int(MissingReason.SUPPRESSED): "suppressed",
+    int(MissingReason.NULL): "null",
+}
+
+_MISSING_TEXT: dict[int, str] = {
+    int(MissingReason.EMPTY): "",
+    int(MissingReason.NOT_APPLICABLE): "—",  # em dash
+    int(MissingReason.SUPPRESSED): "***",
+    int(MissingReason.NULL): "·",  # middle dot
+}
+
+
+def _cell_role(row_role: str, col_role: str) -> str:
+    """Cell role per the memo: total > subtotal > data.
+
+    "Any total-leaf cell is a total cell" — a cell sitting in either a
+    total row or a total column carries the total role. Subtotal-anywhere
+    similarly trumps data. Equal roles return that role.
+    """
+    if _ROLE_RANK[row_role] >= _ROLE_RANK[col_role]:
+        return row_role
+    return col_role
+
+
+def _data_value_attr(value: object) -> str:
+    """Format the `data-value` attribute for a finite-PRESENT cell.
+
+    Returns the attribute fragment (` data-value="..."`) or `""` when
+    the value is non-finite (NaN, +/-inf) — per the memo, non-finite
+    PRESENT cells skip data-value entirely.
+    """
+    v = float(value)
+    if not math.isfinite(v):
+        return ""
+    raw = format(v, ".17g")
+    return f' data-value="{_html.escape(raw, quote=True)}"'
+
+
+def _render_td(
+    value: object,
+    missing_code: int,
+    fmt: str | None,
+    value_kind: ValueKind,
+    cell_role: str,
+) -> str:
+    classes = ["proctab-cell", f"proctab-{cell_role}"]
+
+    if missing_code == int(MissingReason.PRESENT):
+        text = _html.escape(_resolve_format(value, fmt, value_kind))
+        dv = _data_value_attr(value)
+        cls = " ".join(classes)
+        return f'<td class="{cls}"{dv}>{text}</td>'
+
+    suffix = _MISSING_SUFFIX[missing_code]
+    text = _html.escape(_MISSING_TEXT[missing_code])
+    classes.append(f"proctab-missing-{suffix}")
+    cls = " ".join(classes)
+    return f'<td class="{cls}">{text}</td>'
+
+
+def _row_label_th(node: Node, *, scope: str) -> str:
+    indent = max(node.depth - 1, 0)
+    cls = f"proctab-row-label proctab-indent-{indent}"
+    text = _html.escape(_node_label(node))
+    return f'<th scope="{scope}" class="{cls}">{text}</th>'
+
+
+def _render_leaf_row(
+    row_leaf: Node,
+    row_idx: int,
+    col_leaves: list[Node],
+    table: Table,
+) -> str:
+    cells: list[str] = [_row_label_th(row_leaf, scope="row")]
+    for j, col_leaf in enumerate(col_leaves):
+        cell_role = _cell_role(row_leaf.role, col_leaf.role)
+        cells.append(
+            _render_td(
+                table.body[row_idx, j],
+                int(table.missing[row_idx, j]),
+                table.formats[j],
+                table.value_kinds[j],
+                cell_role,
+            )
+        )
+    body = "".join(f"      {c}\n" for c in cells)
+    return f'    <tr class="proctab-{row_leaf.role}">\n{body}    </tr>'
+
+
+def _render_group_row(node: Node, n_col_leaves: int) -> str:
+    label_th = _row_label_th(node, scope="rowgroup")
+    if n_col_leaves > 0:
+        pad = f'<td colspan="{n_col_leaves}" class="proctab-group-pad"></td>'
+    else:
+        pad = ""
+    pad_line = f"      {pad}\n" if pad else ""
+    return (
+        f'    <tr class="proctab-group-header">\n'
+        f"      {label_th}\n"
+        f"{pad_line}"
+        f"    </tr>"
+    )
+
+
+def _render_tbody(table: Table) -> str:
+    col_leaves = table.col_axis.leaves()
+    n_col_leaves = len(col_leaves)
+
+    rows: list[str] = []
+    leaf_idx = 0
+    for node in _walk_nonroot(table.row_axis.tree):
+        if node.children is None:
+            rows.append(_render_leaf_row(node, leaf_idx, col_leaves, table))
+            leaf_idx += 1
+        else:
+            rows.append(_render_group_row(node, n_col_leaves))
+
+    if not rows:
+        return "  <tbody></tbody>"
+    inner = "\n".join(rows)
+    return f"  <tbody>\n{inner}\n  </tbody>"
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry point.
+# ---------------------------------------------------------------------------
+
+
 def render_html(table: Table, *, standalone: bool = False) -> str:
     """Render a Table to an HTML string.
 
-    Current state: emits `<table class="proctab">` with a `<thead>` of
-    column headers per H2; the `<tbody>`, `<caption>`, `<tfoot>`, and
-    default styling land in H3-H6. `standalone=True` wrapping lands in H6.
+    Current state: emits `<table class="proctab">` with `<thead>` (H2)
+    and `<tbody>` (H3). `<caption>` + `<tfoot>` land in H4, default
+    styling in H5, the standalone wrapper in H6, and the
+    `Table._repr_html_` / `Table.to_html` hooks in H7.
     """
     _ = standalone  # H6 will branch on this; the body is the same for now.
     thead = _render_thead(table.col_axis)
-    return f'<table class="proctab">\n{thead}\n</table>'
+    tbody = _render_tbody(table)
+    return f'<table class="proctab">\n{thead}\n{tbody}\n</table>'
