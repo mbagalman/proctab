@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import pytest
 
-from legible._engine import wrap
-from legible.model import (
+from proctab._engine import wrap
+from proctab.model import (
     Axis,
     Dimension,
     SubtotalMarker,
     TotalMarker,
 )
-from legible.tabulate import (
+from proctab.tabulate import (
     STAT_DEFAULTS,
     SUPPORTED_STATS,
     TabulateAxes,

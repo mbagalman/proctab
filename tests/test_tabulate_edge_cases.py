@@ -1,4 +1,4 @@
-"""T8 — Edge-case integration tests through the public lg.tabulate() API.
+"""T8 — Edge-case integration tests through the public pt.tabulate() API.
 
 Belt-and-braces coverage. Some scenarios are tested at lower layers
 (T2 parser, T4a–T4c, T5); T8 verifies behavior end-to-end and locks in
@@ -18,8 +18,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import legible as lg
-from legible.model import MissingReason
+import proctab as pt
+from proctab.model import MissingReason
 
 
 # === Empty DataFrame =======================================================
@@ -40,29 +40,29 @@ class TestEmptyDataFrame:
         })
 
     def test_yields_zero_row_leaves(self, empty_df):
-        table = lg.tabulate(empty_df, rows="region",
+        table = pt.tabulate(empty_df, rows="region",
                             values={"revenue": "sum"})
         assert len(table.row_axis.leaves()) == 0
 
     def test_col_axis_still_has_stat_leaves(self, empty_df):
-        table = lg.tabulate(empty_df, rows="region",
+        table = pt.tabulate(empty_df, rows="region",
                             values={"revenue": "sum"})
         # Col axis independent of row data
         assert len(table.col_axis.leaves()) == 1
 
     def test_body_shape_zero_rows(self, empty_df):
-        table = lg.tabulate(empty_df, rows="region",
+        table = pt.tabulate(empty_df, rows="region",
                             values={"revenue": "sum"}, totals=True)
         assert table.body.shape == (0, 1)
 
     def test_axes_validate(self, empty_df):
-        table = lg.tabulate(empty_df, rows="region",
+        table = pt.tabulate(empty_df, rows="region",
                             values={"revenue": "sum"})
         table.row_axis.validate()
         table.col_axis.validate()
 
     def test_renders_to_text(self, empty_df):
-        table = lg.tabulate(empty_df, rows="region",
+        table = pt.tabulate(empty_df, rows="region",
                             values={"revenue": "sum"})
         # Should not raise; headers still render
         text = table.to_text()
@@ -94,7 +94,7 @@ class TestAllNullValueColumn:
         return pl.DataFrame(data)
 
     def test_sum_on_all_null_group_is_null_not_zero(self, df):
-        table = lg.tabulate(df, rows="region",
+        table = pt.tabulate(df, rows="region",
                             values={"revenue": "sum"}, totals=False)
         # Categories alphabetical: East, West
         # East row 0: PRESENT with value 300
@@ -104,14 +104,14 @@ class TestAllNullValueColumn:
         assert table.missing[1, 0] == MissingReason.NULL
 
     def test_mean_on_all_null_group_is_null(self, df):
-        table = lg.tabulate(df, rows="region",
+        table = pt.tabulate(df, rows="region",
                             values={"revenue": "mean"}, totals=False)
         assert table.missing[1, 0] == MissingReason.NULL
 
     def test_count_on_all_null_group_is_present_zero(self, df):
         # The count exception: count of all-null group is 0 (meaningful),
         # not NULL.
-        table = lg.tabulate(df, rows="region",
+        table = pt.tabulate(df, rows="region",
                             values={"revenue": "count"}, totals=False)
         # East count = 2, West count = 0
         assert table.missing[0, 0] == MissingReason.PRESENT
@@ -137,7 +137,7 @@ class TestNullGroupingDropna:
         return pl.DataFrame(data)
 
     def test_dropna_false_creates_missing_row(self, df_partial_nulls):
-        table = lg.tabulate(df_partial_nulls, rows="region",
+        table = pt.tabulate(df_partial_nulls, rows="region",
                             values={"revenue": "sum"}, totals=False)
         # Categories: East, West, Missing → 3 row leaves
         data_leaves = [leaf for leaf in table.row_axis.leaves()
@@ -150,7 +150,7 @@ class TestNullGroupingDropna:
         np.testing.assert_array_equal(table.body[:, 0], [90, 180, 50])
 
     def test_dropna_true_drops_null_rows(self, df_partial_nulls):
-        table = lg.tabulate(df_partial_nulls, rows="region",
+        table = pt.tabulate(df_partial_nulls, rows="region",
                             values={"revenue": "sum"}, totals=False,
                             dropna=True)
         data_leaves = [leaf for leaf in table.row_axis.leaves()
@@ -167,7 +167,7 @@ class TestNullGroupingDropna:
 class TestObservedFalsePublic:
     def test_with_levels_unobserved_row_has_empty_cells(self, sample_df):
         # sample_df has regions East, South, West; add "North" via levels=
-        table = lg.tabulate(
+        table = pt.tabulate(
             sample_df, rows="region", observed=False,
             levels={"region": ["East", "South", "West", "North"]},
             values={"revenue": "sum"}, totals=True,
@@ -178,7 +178,7 @@ class TestObservedFalsePublic:
 
     def test_observed_false_without_levels_raises(self, sample_df):
         with pytest.raises(ValueError, match="observed=False"):
-            lg.tabulate(sample_df, rows="region",
+            pt.tabulate(sample_df, rows="region",
                         values={"revenue": "sum"}, observed=False)
 
 
@@ -192,7 +192,7 @@ class TestExoticColumnTypes:
             "year": [2020, 2020, 2021, 2022, 2021],
             "revenue": [100.0, 200.0, 150.0, 175.0, 125.0],
         })
-        table = lg.tabulate(df, rows="year",
+        table = pt.tabulate(df, rows="year",
                             values={"revenue": "sum"}, totals=False)
         data_leaves = [leaf for leaf in table.row_axis.leaves()
                        if leaf.role == "data"]
@@ -207,7 +207,7 @@ class TestExoticColumnTypes:
             "flag": [True, False, True, True],
             "value": [10.0, 20.0, 30.0, 40.0],
         })
-        table = lg.tabulate(df, rows="flag",
+        table = pt.tabulate(df, rows="flag",
                             values={"value": "sum"}, totals=False)
         data_leaves = [leaf for leaf in table.row_axis.leaves()
                        if leaf.role == "data"]
@@ -224,7 +224,7 @@ class TestSingleRow:
     def test_single_row_works(self):
         pd = pytest.importorskip("pandas")
         df = pd.DataFrame({"region": ["West"], "revenue": [100.0]})
-        table = lg.tabulate(df, rows="region",
+        table = pt.tabulate(df, rows="region",
                             values={"revenue": "sum"}, totals=True)
         # 1 region + 1 Total = 2 row leaves
         assert len(table.row_axis.leaves()) == 2
@@ -237,7 +237,7 @@ class TestSingleRow:
 
 class TestAllSupportedStats:
     def test_all_six_stats_one_metric(self, sample_df):
-        table = lg.tabulate(
+        table = pt.tabulate(
             sample_df, rows="region",
             values={"revenue": ["sum", "mean", "count", "min", "max", "median"]},
             totals=False,
@@ -269,7 +269,7 @@ class TestNonAdditiveSubtotalEndToEnd:
             "product": ["A", "A", "B", "A", "B"],
             "revenue": [100.0, 200.0, 50.0, 80.0, 60.0],
         })
-        table = lg.tabulate(
+        table = pt.tabulate(
             df, rows=["region", "product"],
             values={"revenue": "mean"},
             subtotals="region", totals=False,
@@ -291,7 +291,7 @@ class TestNonAdditiveSubtotalEndToEnd:
 class TestLevelsSubsetFilter:
     def test_levels_filters_to_listed_categories(self, sample_df):
         # sample_df regions: East, South, West. Request only East.
-        table = lg.tabulate(
+        table = pt.tabulate(
             sample_df, rows="region",
             levels={"region": ["East"]},
             values={"revenue": "sum"}, totals=False,
@@ -325,7 +325,7 @@ class TestLevelsRespectedInTotals:
             "region": ["East", "West"],
             "revenue": [10.0, 90.0],
         })
-        table = lg.tabulate(
+        table = pt.tabulate(
             df, rows="region",
             levels={"region": ["East"]},
             values={"revenue": "sum"}, totals=True,
@@ -343,7 +343,7 @@ class TestLevelsRespectedInTotals:
             "quarter": ["Q1", "Q2", "Q3", "Q4"],
             "revenue": [10.0, 20.0, 30.0, 40.0],
         })
-        table = lg.tabulate(
+        table = pt.tabulate(
             df, rows="region", cols="quarter",
             levels={"quarter": ["Q1"]},
             values={"revenue": "sum"}, totals=True,
@@ -368,7 +368,7 @@ class TestLevelsRespectedInTotals:
             "product": ["A", "B", "A"],
             "revenue": [10.0, 20.0, 30.0],
         })
-        table = lg.tabulate(
+        table = pt.tabulate(
             df, rows=["region", "product"],
             levels={"product": ["A"]},  # B is filtered out
             values={"revenue": "sum"},
@@ -389,7 +389,7 @@ class TestLevelsRespectedInTotals:
             "quarter": ["Q1", "Q2", "Q1", "Q2"],
             "revenue": [10.0, 20.0, 30.0, 40.0],
         })
-        table = lg.tabulate(
+        table = pt.tabulate(
             df, rows="region", cols="quarter",
             levels={"region": ["E"], "quarter": ["Q1"]},
             values={"revenue": "sum"}, totals=True,
@@ -418,7 +418,7 @@ class TestCompoundCaseEndToEnd:
             "channel": ["x", "y", "x", "y"],
             "revenue": [10.0, 20.0, 30.0, 40.0],
         })
-        table = lg.tabulate(
+        table = pt.tabulate(
             df, rows=["region", "product"], cols="channel",
             values={"revenue": "sum"},
             subtotals="region", totals=True,

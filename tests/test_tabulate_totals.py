@@ -11,8 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from legible._engine import wrap
-from legible.tabulate import (
+from proctab._engine import wrap
+from proctab.tabulate import (
     SectionResult,
     TotalsResult,
     _parse_tabulate_args,

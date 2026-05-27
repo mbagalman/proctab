@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from legible.examples import (
+from proctab.examples import (
     example_1_one_way_freq,
     example_1b_two_way_freq,
     example_2_tabulate,
     example_5_customized,
 )
-from legible.render.text import render_text
+from proctab.render.text import render_text
 
 
 ALL_EXAMPLES = [

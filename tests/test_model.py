@@ -1,11 +1,11 @@
-"""Tests for the Legible data-model containers."""
+"""Tests for the proctab data-model containers."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from legible import (
+from proctab import (
     Axis,
     Category,
     Dimension,

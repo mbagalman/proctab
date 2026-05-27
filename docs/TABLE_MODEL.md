@@ -169,7 +169,7 @@ Leaf nodes — `node.children is None` — define the rows of `body` (in left-to
 
 ## How Each VISION Example Maps
 
-### Example 1 — `lg.freq(df, "region")`
+### Example 1 — `pt.freq(df, "region")`
 
 ```
 row_axis.dims:   [ Dimension(name="region", kind="category",
@@ -192,7 +192,7 @@ missing: shape (5, 4), all zeros (PRESENT)
 
 Note: the `region` dimension's `categories` list does **not** contain "Total" — the Total node lives only in the axis tree.
 
-### Example 1b — `lg.freq(df, ["region", "product_line"])`
+### Example 1b — `pt.freq(df, ["region", "product_line"])`
 
 Same shape, but the col axis now has two dimensions (`product_line`, then `_stat` with 4 entries: N / RowPct / ColPct / TotalPct). Each col leaf is at depth 2. Marginal total nodes appear in *both* trees; renderers emit merged "Product A" headers spanning four sub-columns.
 
@@ -201,7 +201,7 @@ Same shape, but the col axis now has two dimensions (`product_line`, then `_stat
 ### Example 2 — the full tabulate
 
 ```python
-lg.tabulate(
+pt.tabulate(
     df, rows=["region","product"], cols=["quarter"],
     values={"revenue":["sum","mean"], "margin":["weighted_mean(weight=units)"]},
     subtotals="region", totals=True,
@@ -340,7 +340,7 @@ Subtotals and totals are computed as additional groupby passes against the sourc
 
 ## Open Questions
 
-1. **Default `value_kind` inference.** When the user calls `lg.tabulate(values={"revenue": "sum"})`, what `ValueKind` attaches to the resulting column? `currency` heuristic from column name? `raw` by default with optional user override? Probably **`raw` by default**, with a user-supplied dtype/kind dict and (later) optional heuristics.
+1. **Default `value_kind` inference.** When the user calls `pt.tabulate(values={"revenue": "sum"})`, what `ValueKind` attaches to the resulting column? `currency` heuristic from column name? `raw` by default with optional user override? Probably **`raw` by default**, with a user-supplied dtype/kind dict and (later) optional heuristics.
 2. **Significance test surface.** When v0.2 adds chi-square etc., we agreed on a separate `.tests` attribute. Open: do tests get their own renderer-contract entry (footnote block, side panel) or do they render via `meta.footnotes`? Probably their own entry — they have structure (statistic, df, p-value, effect size) that footnotes don't.
 3. **`__repr__` vs `_repr_html_`.** Both, no real conflict — noting that the model already supports both.
 

@@ -19,14 +19,14 @@ from typing import Any
 import narwhals.stable.v1 as nw
 import numpy as np
 
-from legible._categories import (
+from proctab._categories import (
     column_has_nulls as _column_has_nulls,
     is_null as _is_null,
     normalize as _normalize,
     resolve_categories,
 )
-from legible._engine import wrap
-from legible.model import (
+from proctab._engine import wrap
+from proctab.model import (
     Axis,
     Category,
     Dimension,
@@ -212,7 +212,7 @@ def aggregate_counts(nw_df: nw.DataFrame, spec: FreqSpec) -> CountResult:
     """Compute raw counts per cell from a narwhals-wrapped DataFrame.
 
     Engine-agnostic: works on whatever native frame the user wrapped via
-    `legible._engine.wrap()`. Honors `spec.dropna`, `spec.levels`, and
+    `proctab._engine.wrap()`. Honors `spec.dropna`, `spec.levels`, and
     `spec.observed` as defined in FREQ_API.md.
 
     Raises `ValueError` if `spec.observed=False` and no explicit
@@ -756,9 +756,9 @@ def freq(
 
     Example:
         >>> import pandas as pd
-        >>> import legible as lg
+        >>> import proctab as pt
         >>> df = pd.DataFrame({"region": ["W", "W", "E", "E", "S"]})
-        >>> table = lg.freq(df, "region")
+        >>> table = pt.freq(df, "region")
         >>> print(table.to_text())  # doctest: +SKIP
     """
     spec = _parse_freq_args(

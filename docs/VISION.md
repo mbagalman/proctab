@@ -1,7 +1,5 @@
 # Vision & API Sketch
 
-> Working name TBD: `legible` (the repo) vs. `proctabulate` (the concept) vs. something else. See [Open Questions](#open-questions).
-
 ## Vision
 
 A Python library for producing executive-ready summary tables and categorical crosstabs from business data in a single, declarative call — and rendering them as polished Excel **and** HTML from the same table object.
@@ -65,21 +63,21 @@ These are the load-bearing decisions. If any of these slip, the library loses it
 ### Example 1 — Frequency table (PROC FREQ analogue)
 
 ```python
-import legible as lg
+import proctab as pt
 
-lg.freq(df, "region")
+pt.freq(df, "region")
 ```
 
 Output (notebook): styled HTML table with `region`, `N`, `Percent`, `Cumulative N`, `Cumulative Percent`, and a total row.
 
 ```python
-lg.freq(df, ["region", "product_line"])  # two-way crosstab
+pt.freq(df, ["region", "product_line"])  # two-way crosstab
 ```
 
 Output: regions as rows, product lines as columns, counts + row/column/total percent in each cell, marginal totals on both axes.
 
 ```python
-lg.freq(df, ["region", "product_line"], test="chi2")
+pt.freq(df, ["region", "product_line"], test="chi2")
 ```
 
 Same table, with a chi-square footer block: statistic, df, p-value, Cramér's V.
@@ -87,7 +85,7 @@ Same table, with a chi-square footer block: statistic, df, p-value, Cramér's V.
 ### Example 2 — Summary table (PROC TABULATE analogue)
 
 ```python
-lg.tabulate(
+pt.tabulate(
     df,
     rows=["region", "product_line"],     # nested row dimensions
     cols=["quarter"],
@@ -105,7 +103,7 @@ Output: a multi-level row index (region → product line), quarter columns, thre
 ### Example 3 — Render to Excel
 
 ```python
-table = lg.tabulate(df, rows=["region", "product"], cols=["quarter"],
+table = pt.tabulate(df, rows=["region", "product"], cols=["quarter"],
                    values={"revenue": "sum"}, totals=True)
 
 table.to_excel("Q1_report.xlsx", sheet="Revenue")
@@ -123,11 +121,11 @@ table.to_html("report.html")
 ### Example 5 — Power-user customization
 
 ```python
-table = lg.tabulate(
+table = pt.tabulate(
     df, rows="region", cols="quarter", values={"revenue": "sum"},
     formats={"revenue": "${:,.0f}"},
     labels={"region": "Sales Region", "revenue": "Net Revenue"},
-    style=lg.styles.executive_dark,
+    style=pt.styles.executive_dark,
 )
 table.add_footnote("Source: internal CRM, 2026-Q1")
 ```
@@ -160,10 +158,10 @@ Out (for v0.1, in for later versions):
 
 ## Open Questions (decide before coding v0.1)
 
-1. **Name.** `legible` is the repo. Candidate names: `legible`, `proctabulate`, `tabulate` (taken on PyPI), `tabulated`, `crosstab`, `execstats`, `boardroom`, `cleartable`. Needs PyPI availability check + a memorable, ungoogleable-in-a-good-way feel.
+1. ~~**Name.**~~ Resolved: `proctab`. PyPI availability confirmed.
 2. **Top-level API surface.** Two functions (`freq`, `tabulate`) or one (`summary`) with a mode argument? My instinct: two — they have meaningfully different default outputs.
 3. **Table object class name.** `Table`? `SummaryTable`? `Tabulation`?
-4. **How to specify weighted/multi-stat columns ergonomically.** The `"weighted_mean(weight=units)"` string in Example 2 is ugly. Alternatives: `lg.agg.weighted_mean("units")`, `("weighted_mean", {"weight": "units"})`, a dedicated `Weighted` class. Worth prototyping a few.
+4. **How to specify weighted/multi-stat columns ergonomically.** The `"weighted_mean(weight=units)"` string in Example 2 is ugly. Alternatives: `pt.agg.weighted_mean("units")`, `("weighted_mean", {"weight": "units"})`, a dedicated `Weighted` class. Worth prototyping a few.
 4. **Excel engine.** `openpyxl` (more flexible, slower) vs. `xlsxwriter` (faster, write-only). Probably `openpyxl` for round-tripping.
 5. **License.** MIT? Apache 2.0? BSD-3?
 6. **Versioning + release cadence.** Semver from v0.1, or stay 0.x until API stabilizes?

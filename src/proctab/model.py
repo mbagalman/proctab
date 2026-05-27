@@ -1,4 +1,4 @@
-"""Pure data containers for the Legible table model.
+"""Pure data containers for the proctab table model.
 
 See ../../TABLE_MODEL.md for the design rationale. This module defines the
 in-memory shape of a `Table` and the types it composes; it does NOT perform
@@ -260,6 +260,6 @@ class Table:
             )
 
     def to_text(self, **kwargs: Any) -> str:
-        """Plain-text render. Convenience wrapper around `legible.render.text.render_text`."""
-        from legible.render.text import render_text
+        """Plain-text render. Convenience wrapper around `proctab.render.text.render_text`."""
+        from proctab.render.text import render_text
         return render_text(self, **kwargs)

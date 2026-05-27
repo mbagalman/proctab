@@ -9,13 +9,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from legible.freq import (
+from proctab.freq import (
     CountResult,
     FreqSpec,
     PercentResult,
     derive_percentages,
 )
-from legible.model import Category, MissingReason
+from proctab.model import Category, MissingReason
 
 
 def _counts_1d(values, cats=None) -> CountResult:

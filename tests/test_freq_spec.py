@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from legible.freq import FreqSpec, _parse_freq_args
+from proctab.freq import FreqSpec, _parse_freq_args
 
 
 class TestFreqSpec:

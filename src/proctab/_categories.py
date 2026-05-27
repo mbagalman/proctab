@@ -16,7 +16,7 @@ from typing import Any
 
 import narwhals.stable.v1 as nw
 
-from legible.model import Category
+from proctab.model import Category
 
 
 # Lazy pandas reference for pd.NA / pd.NaT singleton checks. Pandas is a

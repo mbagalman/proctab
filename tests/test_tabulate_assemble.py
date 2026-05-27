@@ -12,9 +12,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from legible._engine import wrap
-from legible.model import MissingReason
-from legible.tabulate import (
+from proctab._engine import wrap
+from proctab.model import MissingReason
+from proctab.tabulate import (
     ColLeafEntry,
     RowLeafEntry,
     TabulateAssembled,

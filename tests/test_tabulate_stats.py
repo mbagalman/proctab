@@ -11,8 +11,8 @@ import pytest
 
 import narwhals.stable.v1 as nw
 
-from legible._engine import wrap
-from legible.tabulate import STAT_EXPRS, SUPPORTED_STATS
+from proctab._engine import wrap
+from proctab.tabulate import STAT_EXPRS, SUPPORTED_STATS
 
 
 def _scalar(nw_df, col, stat):

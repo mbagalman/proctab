@@ -1,8 +1,8 @@
-"""T7 — Integration tests: does lg.tabulate() reproduce the v0.1-clean
+"""T7 — Integration tests: does pt.tabulate() reproduce the v0.1-clean
 reference fixture from examples.py?
 
 The fixture `example_2_tabulate_v01` computes every body cell directly
-in numpy (no lg.tabulate involvement), so this is an end-to-end check
+in numpy (no pt.tabulate involvement), so this is an end-to-end check
 that the implementation agrees with an independent reference.
 
 Both pandas and polars input.
@@ -13,12 +13,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import legible as lg
-from legible.examples import (
+import proctab as pt
+from proctab.examples import (
     example_2_tabulate_v01,
     example_2_tabulate_v01_source,
 )
-from legible.model import Table
+from proctab.model import Table
 
 
 def _leaf_paths(table: Table, axis: str) -> list[tuple]:
@@ -41,7 +41,7 @@ class TestExample2TabulateV01:
     revenue + margin metrics, subtotals at region, totals=True.
 
     Reference Table comes from independent numpy aggregation; tests
-    assert lg.tabulate produces the same Table structure and values."""
+    assert pt.tabulate produces the same Table structure and values."""
 
     @pytest.fixture(params=["pandas", "polars"])
     def df(self, request):
@@ -54,7 +54,7 @@ class TestExample2TabulateV01:
 
     @pytest.fixture
     def result(self, df):
-        return lg.tabulate(
+        return pt.tabulate(
             df,
             rows=["region", "product"],
             cols="quarter",

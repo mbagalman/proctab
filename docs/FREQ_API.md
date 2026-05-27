@@ -41,17 +41,17 @@ The `*keys: str | Sequence[str]` annotation is approximate — what matters is t
 ### Key forms (all accepted)
 
 ```python
-lg.freq(df, "region")                              # one-way, single positional
-lg.freq(df, ["region"])                            # one-way, list
-lg.freq(df, "region", "product_line")              # two-way, positional
-lg.freq(df, ["region", "product_line"])            # two-way, list
+pt.freq(df, "region")                              # one-way, single positional
+pt.freq(df, ["region"])                            # one-way, list
+pt.freq(df, "region", "product_line")              # two-way, positional
+pt.freq(df, ["region", "product_line"])            # two-way, list
 ```
 
 **Rejected** (mixed forms — raise `TypeError`):
 
 ```python
-lg.freq(df, ["region"], "product_line")            # error: mix list and positional
-lg.freq(df, "region", ["product_line"])            # error: mix list and positional
+pt.freq(df, ["region"], "product_line")            # error: mix list and positional
+pt.freq(df, "region", ["product_line"])            # error: mix list and positional
 ```
 
 ### What it returns
@@ -62,7 +62,7 @@ A `Table` whose:
 - `body` holds counts and percentages as floats.
 - `value_kinds` / `formats` set per-col-leaf (N → count, percent stats → percent).
 
-The exact shape is identical to the hand-built fixtures in [`examples.py`](src/legible/examples.py) — see [Worked Examples](#worked-examples) below.
+The exact shape is identical to the hand-built fixtures in [`examples.py`](src/proctab/examples.py) — see [Worked Examples](#worked-examples) below.
 
 ## Default Statistic Set
 
@@ -93,7 +93,7 @@ Direct application of the policy in [TABLE_MODEL.md#null-handling-policy-v01](TA
 
 ## `observed=True/False`
 
-Per-dim flag on [`Dimension`](src/legible/model.py); in v0.1, the function kwarg applies it globally to all dims.
+Per-dim flag on [`Dimension`](src/proctab/model.py); in v0.1, the function kwarg applies it globally to all dims.
 
 - `observed=True` (default) — only categories that appear in source data become leaves.
 - `observed=False` — full domain from `levels=` argument (if provided) or from a pandas `Categorical` / polars `Enum` dtype's defined values. Categories with no source rows produce leaves with `MissingReason.EMPTY` cells.
@@ -106,10 +106,10 @@ Per-dim override (e.g., `observed=False` on the column key only) is parked to v0
 
 ```python
 df = pd.DataFrame({"region": ["W","W","E","E","E","S","N"]})
-lg.freq(df, "region")
+pt.freq(df, "region")
 ```
 
-Returns the structure of [`examples.example_1_one_way_freq`](src/legible/examples.py):
+Returns the structure of [`examples.example_1_one_way_freq`](src/proctab/examples.py):
 
 - `row_axis`: `region` with 4 data categories + Total row (5 row leaves)
 - `col_axis`: `_stat` with N / Pct / CumN / CumPct (4 col leaves)
@@ -119,10 +119,10 @@ Returns the structure of [`examples.example_1_one_way_freq`](src/legible/example
 
 ```python
 df = pd.DataFrame({"region": [...], "product_line": [...]})
-lg.freq(df, "region", "product_line")
+pt.freq(df, "region", "product_line")
 ```
 
-Returns the structure of [`examples.example_1b_two_way_freq`](src/legible/examples.py):
+Returns the structure of [`examples.example_1b_two_way_freq`](src/proctab/examples.py):
 
 - `row_axis`: `region` with 3 data categories + Total row (4 row leaves)
 - `col_axis`: `product_line` (2 cats + TotalMarker) × `_stat` (N / Row% / Col% / Tot%) → 12 col leaves
@@ -154,7 +154,7 @@ These two cases plus their `totals=False`, `observed=False`, and `dropna=True` v
 
 ## Open Questions
 
-1. **Accept a list as the keys form** (`lg.freq(df, ["region", "product_line"])`)? The VISION.md sketch showed this; the positional form is cleaner. Allowing both adds branching to input parsing but matches user intuition (people pass lists). **Recommend: allow both** — single-element list → one-way; two-element list → two-way; reject mixed positional+list as a `TypeError`.
+1. **Accept a list as the keys form** (`pt.freq(df, ["region", "product_line"])`)? The VISION.md sketch showed this; the positional form is cleaner. Allowing both adds branching to input parsing but matches user intuition (people pass lists). **Recommend: allow both** — single-element list → one-way; two-element list → two-way; reject mixed positional+list as a `TypeError`.
 2. **Two-way Total column stats — all four or just N + Tot%?** Including all four produces tautological 100% values in Col% and Row% for the Total column (and in Row%/Tot% for the Total row). SAS includes them all and that's what the hand-built example does. **Recommend: all four for consistency**, with documented note that some are trivially 100%.
 3. **`label` dict — dim renames only, or also category renames?** Dim renames (`label={"region": "Sales Region"}`) are the common case. Category renames (`label={"region.West": "Western Region"}`) are useful but increase the dict's surface area. **Recommend: dim-only in v0.1**, category renames in v0.2 via a richer `formats=` / `categories=` API.
 4. **narwhals public type for `data` annotation.** Need to confirm — likely `nw.typing.IntoFrame`. Verify when implementing.

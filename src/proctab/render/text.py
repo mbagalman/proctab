@@ -1,4 +1,4 @@
-"""Plain-text renderer for Legible Tables.
+"""Plain-text renderer for proctab Tables.
 
 Functional, not polished. Used for REPL inspection, tests, and CI artifacts.
 The HTML and Excel renderers are the headline outputs; this one exists to
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from io import StringIO
 
-from legible.model import (
+from proctab.model import (
     Axis,
     Category,
     MissingReason,

@@ -20,9 +20,9 @@ from typing import Any
 import narwhals.stable.v1 as nw
 import numpy as np
 
-from legible._categories import is_null, normalize, resolve_categories
-from legible._engine import wrap
-from legible.model import (
+from proctab._categories import is_null, normalize, resolve_categories
+from proctab._engine import wrap
+from proctab.model import (
     Axis,
     Category,
     Dimension,
@@ -1400,12 +1400,12 @@ def tabulate(
 
     Example:
         >>> import pandas as pd
-        >>> import legible as lg
+        >>> import proctab as pt
         >>> df = pd.DataFrame({
         ...     "region": ["W", "W", "E", "E"],
         ...     "revenue": [100.0, 80.0, 90.0, 70.0],
         ... })
-        >>> table = lg.tabulate(df, rows="region", values={"revenue": "sum"})
+        >>> table = pt.tabulate(df, rows="region", values={"revenue": "sum"})
         >>> print(table.to_text())  # doctest: +SKIP
     """
     spec = _parse_tabulate_args(

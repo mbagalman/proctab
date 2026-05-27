@@ -10,8 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from legible._engine import wrap
-from legible.freq import (
+from proctab._engine import wrap
+from proctab.freq import (
     CountResult,
     _parse_freq_args,
     aggregate_counts,

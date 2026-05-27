@@ -60,16 +60,16 @@ required; the rest have defaults.
 
 ```python
 # One row dim, one col dim, one metric, one stat
-lg.tabulate(df, rows="region", cols="quarter", values={"revenue": "sum"})
+pt.tabulate(df, rows="region", cols="quarter", values={"revenue": "sum"})
 
 # Equivalent — list form for the stat
-lg.tabulate(df, rows="region", cols="quarter", values={"revenue": ["sum"]})
+pt.tabulate(df, rows="region", cols="quarter", values={"revenue": ["sum"]})
 
 # Two row dims, no col dim — pure row-grouped sums
-lg.tabulate(df, rows=["region", "product"], values={"revenue": ["sum", "mean"]})
+pt.tabulate(df, rows=["region", "product"], values={"revenue": ["sum", "mean"]})
 
 # Two row dims, one col dim, multiple stats per metric, subtotals + totals
-lg.tabulate(
+pt.tabulate(
     df,
     rows=["region", "product"],
     cols="quarter",
@@ -201,7 +201,7 @@ auto-detect).
 ### Example A — pure row-grouped sums (no col dim)
 
 ```python
-lg.tabulate(
+pt.tabulate(
     df, rows="region",
     values={"revenue": ["sum", "mean"]},
 )
@@ -215,7 +215,7 @@ lg.tabulate(
 ### Example B — single row dim, single col dim, single stat
 
 ```python
-lg.tabulate(
+pt.tabulate(
     df, rows="region", cols="quarter",
     values={"revenue": ["sum"]},
 )
@@ -228,11 +228,11 @@ lg.tabulate(
 
 ### Example C — the full Example 2 from VISION
 
-The hand-built [example_2_tabulate](src/legible/examples.py) fixture
+The hand-built [example_2_tabulate](src/proctab/examples.py) fixture
 shows the target structure for:
 
 ```python
-lg.tabulate(
+pt.tabulate(
     df,
     rows=["region", "product"],
     cols="quarter",
@@ -250,7 +250,7 @@ lg.tabulate(
 - Body shape: `(2 regions × 2 products + 2 subtotals + 1 grand total,
   4 quarters × 3 stat-leaves + 1 Total col × 3) = (7, 15)`.
 
-**On the fixture:** the existing [example_2_tabulate](src/legible/examples.py)
+**On the fixture:** the existing [example_2_tabulate](src/proctab/examples.py)
 uses `weighted_mean`, which v0.1 doesn't support. Don't mutate that
 fixture — keep it as the "future target" the VISION promised. The
 tabulate integration tests (T7) will use a separate v0.1-clean

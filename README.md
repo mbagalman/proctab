@@ -1,12 +1,9 @@
-# Legible
+# proctab
 
 > **Status: pre-alpha — not usable yet. Please do not install or
 > depend on this code.** No public release, no PyPI package, no
 > stable API. The repo is open so the design work can happen in
 > public, not because the library is ready for users.
->
-> *`legible` is a working name. The final project name has not
-> been chosen.*
 
 ## What this aims to be
 

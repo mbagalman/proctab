@@ -1,5 +1,5 @@
-"""F7 — Integration tests: does lg.freq() reproduce the hand-built
-example fixtures from src/legible/examples.py?
+"""F7 — Integration tests: does pt.freq() reproduce the hand-built
+example fixtures from src/proctab/examples.py?
 
 For each freq-shaped example, build a DataFrame whose freq() output
 should structurally match the reference Table. `levels=` is used to
@@ -14,12 +14,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import legible as lg
-from legible.examples import (
+import proctab as pt
+from proctab.examples import (
     example_1_one_way_freq,
     example_1b_two_way_freq,
 )
-from legible.model import Table
+from proctab.model import Table
 
 
 def _leaf_paths(table: Table, axis: str) -> list[tuple]:
@@ -59,7 +59,7 @@ class TestExample1OneWay:
     def result(self, df):
         # levels= preserves example_1's category order (West, East, South,
         # North) — freq() defaults to alphabetical sort.
-        return lg.freq(
+        return pt.freq(
             df, "region",
             levels={"region": ["West", "East", "South", "North"]},
         )
@@ -141,7 +141,7 @@ class TestExample1bTwoWay:
 
     @pytest.fixture
     def result(self, df):
-        return lg.freq(
+        return pt.freq(
             df, "region", "product_line",
             levels={
                 "region": ["West", "East", "South"],
@@ -210,6 +210,6 @@ class TestExamplesStillValid:
     def test_example_1b_text_render_unchanged_for_n_label(self):
         # "N" should appear in the rendered header (was Category("N", label="N"),
         # now Category("N") — value-driven label resolves to the same string)
-        from legible.render.text import render_text
+        from proctab.render.text import render_text
         text = render_text(example_1b_two_way_freq())
         assert "N" in text

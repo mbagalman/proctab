@@ -1,4 +1,4 @@
-"""F8 — Edge-case integration tests through the public lg.freq() API.
+"""F8 — Edge-case integration tests through the public pt.freq() API.
 
 Belt-and-braces coverage. Some scenarios are tested at lower layers
 (F2 parser, F4a aggregation, F3 engine adapter); F8 verifies they
@@ -15,8 +15,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import legible as lg
-from legible.model import MissingReason
+import proctab as pt
+from proctab.model import MissingReason
 
 
 # === Empty DataFrame =======================================================
@@ -32,26 +32,26 @@ class TestEmptyDataFrame:
         return pl.DataFrame(schema={"region": pl.String})
 
     def test_one_way_empty_yields_zero_row_leaves(self, empty_df):
-        table = lg.freq(empty_df, "region")
+        table = pt.freq(empty_df, "region")
         assert len(table.row_axis.leaves()) == 0
 
     def test_one_way_empty_keeps_stat_leaves(self, empty_df):
         # Col axis has the stat dim regardless of row data.
-        table = lg.freq(empty_df, "region")
+        table = pt.freq(empty_df, "region")
         assert len(table.col_axis.leaves()) == 4
 
     def test_one_way_empty_body_shape(self, empty_df):
-        table = lg.freq(empty_df, "region")
+        table = pt.freq(empty_df, "region")
         assert table.body.shape == (0, 4)
 
     def test_one_way_empty_axes_validate(self, empty_df):
-        table = lg.freq(empty_df, "region")
+        table = pt.freq(empty_df, "region")
         table.row_axis.validate()
         table.col_axis.validate()
 
     def test_one_way_empty_renders_to_text(self, empty_df):
         # No body rows, but headers still emit. Should not raise.
-        text = lg.freq(empty_df, "region").to_text()
+        text = pt.freq(empty_df, "region").to_text()
         assert "N" in text
 
 
@@ -69,7 +69,7 @@ class TestNullHandlingPublic:
         return pl.DataFrame(data)
 
     def test_dropna_false_appends_missing(self, df_partial_nulls):
-        table = lg.freq(df_partial_nulls, "region")
+        table = pt.freq(df_partial_nulls, "region")
         leaves = table.row_axis.leaves()
         # Alphabetical East, West, then Missing, then Total
         data_leaves = [leaf for leaf in leaves if leaf.role == "data"]
@@ -80,7 +80,7 @@ class TestNullHandlingPublic:
         np.testing.assert_array_equal(table.body[:, 0], [1, 2, 1, 4])
 
     def test_dropna_true_drops_nulls(self, df_partial_nulls):
-        table = lg.freq(df_partial_nulls, "region", dropna=True)
+        table = pt.freq(df_partial_nulls, "region", dropna=True)
         data_leaves = [leaf for leaf in table.row_axis.leaves()
                        if leaf.role == "data"]
         values = [leaf.path[0].value for leaf in data_leaves]
@@ -97,7 +97,7 @@ class TestNullHandlingPublic:
         return pl.DataFrame({"region": pl.Series([None, None, None], dtype=pl.String)})
 
     def test_all_null_dropna_false_yields_missing_only(self, df_all_null):
-        table = lg.freq(df_all_null, "region")
+        table = pt.freq(df_all_null, "region")
         # Only the Missing category + Total
         leaves = table.row_axis.leaves()
         assert len(leaves) == 2
@@ -105,7 +105,7 @@ class TestNullHandlingPublic:
         np.testing.assert_array_equal(table.body[:, 0], [3, 3])
 
     def test_all_null_dropna_true_yields_empty(self, df_all_null):
-        table = lg.freq(df_all_null, "region", dropna=True)
+        table = pt.freq(df_all_null, "region", dropna=True)
         assert len(table.row_axis.leaves()) == 0
         assert table.body.shape == (0, 4)
 
@@ -116,7 +116,7 @@ class TestNullHandlingPublic:
 class TestObservedFalsePublic:
     def test_with_levels_includes_unobserved_categories(self, sample_df):
         # sample_df has region={East, South, West}; add "North" via levels=
-        table = lg.freq(
+        table = pt.freq(
             sample_df, "region", observed=False,
             levels={"region": ["West", "East", "South", "North"]},
         )
@@ -126,7 +126,7 @@ class TestObservedFalsePublic:
             ["West", "East", "South", "North"]
 
     def test_unobserved_row_has_empty_n_and_pct_cells(self, sample_df):
-        table = lg.freq(
+        table = pt.freq(
             sample_df, "region", observed=False,
             levels={"region": ["West", "East", "South", "North"]},
         )
@@ -137,7 +137,7 @@ class TestObservedFalsePublic:
 
     def test_observed_false_without_levels_raises(self, sample_df):
         with pytest.raises(ValueError, match="observed=False"):
-            lg.freq(sample_df, "region", observed=False)
+            pt.freq(sample_df, "region", observed=False)
 
 
 # === levels= behavior ======================================================
@@ -145,7 +145,7 @@ class TestObservedFalsePublic:
 
 class TestLevelsBehaviorPublic:
     def test_subset_filters_to_listed_categories(self, sample_df):
-        table = lg.freq(sample_df, "region", levels={"region": ["East"]})
+        table = pt.freq(sample_df, "region", levels={"region": ["East"]})
         data_leaves = [leaf for leaf in table.row_axis.leaves()
                        if leaf.role == "data"]
         assert len(data_leaves) == 1
@@ -154,7 +154,7 @@ class TestLevelsBehaviorPublic:
         assert table.body[0, 0] == 2
 
     def test_extra_unobserved_category_yields_zero_count(self, sample_df):
-        table = lg.freq(
+        table = pt.freq(
             sample_df, "region",
             levels={"region": ["West", "East", "Mars"]},
         )
@@ -163,7 +163,7 @@ class TestLevelsBehaviorPublic:
         assert table.missing[2, 0] == MissingReason.EMPTY
 
     def test_levels_preserves_user_order(self, sample_df):
-        table = lg.freq(
+        table = pt.freq(
             sample_df, "region",
             levels={"region": ["South", "West", "East"]},
         )
@@ -181,7 +181,7 @@ class TestExoticColumnTypes:
     def test_numeric_grouping_column(self):
         pd = pytest.importorskip("pandas")
         df = pd.DataFrame({"year": [2020, 2020, 2021, 2022, 2021]})
-        table = lg.freq(df, "year")
+        table = pt.freq(df, "year")
         data_leaves = [leaf for leaf in table.row_axis.leaves()
                        if leaf.role == "data"]
         assert [leaf.path[0].value for leaf in data_leaves] == [2020, 2021, 2022]
@@ -191,7 +191,7 @@ class TestExoticColumnTypes:
     def test_boolean_grouping_column(self):
         pd = pytest.importorskip("pandas")
         df = pd.DataFrame({"flag": [True, False, True, True]})
-        table = lg.freq(df, "flag")
+        table = pt.freq(df, "flag")
         data_leaves = [leaf for leaf in table.row_axis.leaves()
                        if leaf.role == "data"]
         # Sorted: False (0), True (1)
@@ -206,7 +206,7 @@ class TestMinimalAndIgnoredColumns:
     def test_single_row_dataframe_works(self):
         pd = pytest.importorskip("pandas")
         df = pd.DataFrame({"region": ["West"]})
-        table = lg.freq(df, "region")
+        table = pt.freq(df, "region")
         data_leaves = [leaf for leaf in table.row_axis.leaves()
                        if leaf.role == "data"]
         assert len(data_leaves) == 1
@@ -219,7 +219,7 @@ class TestMinimalAndIgnoredColumns:
     def test_extra_columns_ignored(self, sample_df):
         # sample_df has region, product, revenue, units. freq(df, "region")
         # must produce the same counts as if only region existed.
-        table = lg.freq(sample_df, "region")
+        table = pt.freq(sample_df, "region")
         # 3 data categories + Total
         assert len(table.row_axis.leaves()) == 4
         # Counts: East=2, South=3, West=2, Total=7
@@ -236,7 +236,7 @@ class TestTwoWayEdges:
             "region": ["W", "W", "E", "E"],
             "product": ["A", "A", "A", "A"],  # only one value
         })
-        table = lg.freq(df, "region", "product")
+        table = pt.freq(df, "region", "product")
         # 1 product cat + Total col = 2 col groups × 4 stats = 8 col leaves
         # 2 regions + Total row = 3 row leaves
         assert table.body.shape == (3, 8)
@@ -251,7 +251,7 @@ class TestTwoWayEdges:
             "product": ["A", "B", "A", "B"],
         })
         # dropna=True drops the null-region row; 3 records remain
-        table = lg.freq(df, "region", "product", dropna=True)
+        table = pt.freq(df, "region", "product", dropna=True)
         data_row_leaves = [leaf for leaf in table.row_axis.leaves()
                            if leaf.role == "data"]
         cats = [leaf.path[0].value for leaf in data_row_leaves]
@@ -264,7 +264,7 @@ class TestTwoWayEdges:
             "region": pd.Series([], dtype="object"),
             "product": pd.Series([], dtype="object"),
         })
-        table = lg.freq(df, "region", "product")
+        table = pt.freq(df, "region", "product")
         assert len(table.row_axis.leaves()) == 0
         assert len(table.col_axis.leaves()) == 0
         assert table.body.shape == (0, 0)

@@ -1,6 +1,6 @@
 """DataFrame engine adapter (pandas / polars) via narwhals.
 
-Internal — public API in `legible.freq` / `legible.tabulate` accepts native
+Internal — public API in `proctab.freq` / `proctab.tabulate` accepts native
 DataFrames and routes through `wrap()` to get an engine-agnostic
 `narwhals.DataFrame` for downstream aggregation work.
 

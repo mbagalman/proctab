@@ -1,12 +1,12 @@
-"""Legible — executive-ready summary tables and crosstabs.
+"""proctab — executive-ready summary tables and crosstabs.
 
 v0.0.1 data-model layer. See TABLE_MODEL.md in the project root for the
 design memo this implements.
 """
 
-from legible.freq import freq
-from legible.tabulate import tabulate
-from legible.model import (
+from proctab.freq import freq
+from proctab.tabulate import tabulate
+from proctab.model import (
     Axis,
     Category,
     Dimension,
@@ -21,7 +21,7 @@ from legible.model import (
     TotalMarker,
     ValueKind,
 )
-from legible.render.text import render_text
+from proctab.render.text import render_text
 
 __all__ = [
     "Axis",

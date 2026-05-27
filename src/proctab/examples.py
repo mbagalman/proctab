@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from legible.model import (
+from proctab.model import (
     Axis,
     Category,
     Dimension,
@@ -51,7 +51,7 @@ def _root(children) -> Node:
 
 
 def example_1_one_way_freq() -> Table:
-    """`lg.freq(df, "region")` — one-way frequency table."""
+    """`pt.freq(df, "region")` — one-way frequency table."""
     regions = [Category("West"), Category("East"),
                Category("South"), Category("North")]
     stats = [Category("N"), Category("Pct"),
@@ -94,7 +94,7 @@ def example_1_one_way_freq() -> Table:
 
 
 def example_1b_two_way_freq() -> Table:
-    """`lg.freq(df, ["region", "product_line"])` — two-way crosstab with margins."""
+    """`pt.freq(df, ["region", "product_line"])` — two-way crosstab with margins."""
     regions = [Category("West"), Category("East"), Category("South")]
     products = [Category("Widget A"), Category("Widget B")]
     stats = [
@@ -324,13 +324,13 @@ def example_2_tabulate_v01() -> Table:
     """v0.1-clean version of `example_2_tabulate`: substitutes `mean`
     for `weighted_mean` on the margin metric (weighted is v0.2).
 
-    Structurally identical to what `lg.tabulate(df, rows=["region",
+    Structurally identical to what `pt.tabulate(df, rows=["region",
     "product"], cols="quarter", values={"revenue": ["sum", "mean"],
     "margin": "mean"}, subtotals="region", totals=True)` should
     produce for the source DataFrame from `example_2_tabulate_v01_source()`.
 
     Every cell value is computed by direct numpy aggregation here,
-    independently of the `lg.tabulate` pipeline — that's the point.
+    independently of the `pt.tabulate` pipeline — that's the point.
     T7's integration tests run both and assert the outputs match.
     """
     src = example_2_tabulate_v01_source()
@@ -340,7 +340,7 @@ def example_2_tabulate_v01() -> Table:
     product = np.array(src["product"])
     quarter = np.array(src["quarter"])
 
-    # Categories — sorted alphabetical, matching lg.tabulate's observed-mode default
+    # Categories — sorted alphabetical, matching pt.tabulate's observed-mode default
     region_cats = ("E", "W")
     product_cats = ("A", "B")
     quarter_cats = ("Q1", "Q2")

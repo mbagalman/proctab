@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from legible.tabulate import (
+from proctab.tabulate import (
     SUPPORTED_STATS,
     TabSpec,
     _parse_tabulate_args,

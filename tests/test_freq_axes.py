@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from legible.freq import (
+from proctab.freq import (
     AxisBuildResult,
     CountResult,
     FreqSpec,
@@ -18,7 +18,7 @@ from legible.freq import (
     build_axes,
     derive_percentages,
 )
-from legible.model import (
+from proctab.model import (
     Axis,
     Category,
     Dimension,
