@@ -3,9 +3,9 @@
 v0.1: single default theme, two output modes (fragment / standalone).
 See docs/HTML_RENDERER.md for the locked design memo.
 
-Current state: H1 (format resolver) + H2 (column headers) + H3 (body).
-H4-H7 will add caption/tfoot, default styling, the standalone wrapper,
-and the `Table._repr_html_` / `Table.to_html` method wiring.
+Current state: H1 (format resolver) + H2 (column headers) + H3 (body)
++ H4 (caption + tfoot). H5-H7 will add default styling, the standalone
+wrapper, and the `Table._repr_html_` / `Table.to_html` method wiring.
 """
 
 from __future__ import annotations
@@ -299,6 +299,57 @@ def _render_tbody(table: Table) -> str:
 
 
 # ---------------------------------------------------------------------------
+# H4 — Caption + tfoot.
+# ---------------------------------------------------------------------------
+
+
+def _render_caption(meta: dict | None) -> str:
+    if not meta:
+        return ""
+    title = meta.get("title")
+    if not title:
+        return ""
+    return (
+        f'  <caption class="proctab-caption">'
+        f"{_html.escape(str(title))}"
+        f"</caption>"
+    )
+
+
+def _render_tfoot(meta: dict | None, n_total_cols: int) -> str:
+    """Emit `<tfoot>` with source + footnote rows when meta supplies them.
+
+    Order matches the locked schematic in docs/HTML_RENDERER.md: a single
+    source row (prefixed "Source: ") followed by one footnote row per
+    footnote. `<tfoot>` is omitted entirely when neither key is present.
+    """
+    if not meta:
+        return ""
+    source = meta.get("source")
+    footnotes = meta.get("footnotes") or []
+    if not source and not footnotes:
+        return ""
+
+    rows: list[str] = []
+    if source:
+        text = _html.escape(f"Source: {source}")
+        rows.append(
+            f'    <tr class="proctab-source">\n'
+            f'      <td colspan="{n_total_cols}">{text}</td>\n'
+            f"    </tr>"
+        )
+    for fn in footnotes:
+        text = _html.escape(str(fn))
+        rows.append(
+            f'    <tr class="proctab-footnote">\n'
+            f'      <td colspan="{n_total_cols}">{text}</td>\n'
+            f"    </tr>"
+        )
+    inner = "\n".join(rows)
+    return f"  <tfoot>\n{inner}\n  </tfoot>"
+
+
+# ---------------------------------------------------------------------------
 # Top-level entry point.
 # ---------------------------------------------------------------------------
 
@@ -306,12 +357,24 @@ def _render_tbody(table: Table) -> str:
 def render_html(table: Table, *, standalone: bool = False) -> str:
     """Render a Table to an HTML string.
 
-    Current state: emits `<table class="proctab">` with `<thead>` (H2)
-    and `<tbody>` (H3). `<caption>` + `<tfoot>` land in H4, default
-    styling in H5, the standalone wrapper in H6, and the
-    `Table._repr_html_` / `Table.to_html` hooks in H7.
+    Current state: emits `<table class="proctab">` with optional
+    `<caption>` (H4), `<thead>` (H2), `<tbody>` (H3), and optional
+    `<tfoot>` (H4). Default styling lands in H5, the standalone wrapper
+    in H6, and the `Table._repr_html_` / `Table.to_html` hooks in H7.
     """
     _ = standalone  # H6 will branch on this; the body is the same for now.
+    n_total_cols = 1 + len(table.col_axis.leaves())
+    caption = _render_caption(table.meta)
     thead = _render_thead(table.col_axis)
     tbody = _render_tbody(table)
-    return f'<table class="proctab">\n{thead}\n{tbody}\n</table>'
+    tfoot = _render_tfoot(table.meta, n_total_cols)
+
+    parts: list[str] = ['<table class="proctab">']
+    if caption:
+        parts.append(caption)
+    parts.append(thead)
+    parts.append(tbody)
+    if tfoot:
+        parts.append(tfoot)
+    parts.append("</table>")
+    return "\n".join(parts)

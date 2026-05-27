@@ -1,4 +1,4 @@
-"""Tests for the HTML renderer (H1 + H2 + H3).
+"""Tests for the HTML renderer (H1 + H2 + H3 + H4).
 
 Contract source: docs/HTML_RENDERER.md.
 
@@ -19,6 +19,7 @@ from proctab.examples import (
     example_1_one_way_freq,
     example_1b_two_way_freq,
     example_2_tabulate_v01,
+    example_5_customized,
 )
 from proctab.model import (
     Axis,
@@ -767,3 +768,198 @@ class TestEmptyTable:
         root = _parse(render_html(self._empty()))
         rows = _tbody_rows(root)
         assert rows == []
+
+    def test_no_caption_when_meta_empty(self):
+        root = _parse(render_html(self._empty()))
+        assert root.find("caption") is None
+
+    def test_no_tfoot_when_meta_empty(self):
+        root = _parse(render_html(self._empty()))
+        assert root.find("tfoot") is None
+
+
+# ---------------------------------------------------------------------------
+# H4 — Caption + tfoot.
+# ---------------------------------------------------------------------------
+
+
+def _table_with_meta(meta: dict) -> Table:
+    """Tiny 1×1 Table with the supplied meta — for H4 unit tests."""
+    base = _build_one_row_table(
+        body=[1.0],
+        missing_codes=[int(MissingReason.PRESENT)],
+        col_labels=["x"],
+    )
+    return Table(
+        row_axis=base.row_axis,
+        col_axis=base.col_axis,
+        body=base.body,
+        missing=base.missing,
+        value_kinds=base.value_kinds,
+        formats=base.formats,
+        meta=meta,
+    )
+
+
+class TestCaption:
+    """Title in meta produces a <caption>; absence omits it entirely."""
+
+    def test_title_emits_caption_immediately_inside_table(self):
+        table = _table_with_meta({"title": "My Title"})
+        root = _parse(render_html(table))
+        # caption must be the first child of <table> per HTML spec
+        children = list(root)
+        assert children[0].tag == "caption"
+        assert children[0].text == "My Title"
+        assert children[0].get("class") == "proctab-caption"
+
+    def test_no_title_omits_caption(self):
+        table = _table_with_meta({})
+        root = _parse(render_html(table))
+        assert root.find("caption") is None
+
+    def test_empty_string_title_omits_caption(self):
+        table = _table_with_meta({"title": ""})
+        root = _parse(render_html(table))
+        assert root.find("caption") is None
+
+    def test_title_with_html_sensitive_chars_is_escaped(self):
+        table = _table_with_meta({"title": "Q1 & Q2 <2026>"})
+        out = render_html(table)
+        root = _parse(out)
+        cap = root.find("caption")
+        assert cap is not None
+        # parse-back yields original text; raw output is escaped
+        assert cap.text == "Q1 & Q2 <2026>"
+        assert "&amp;" in out and "&lt;" in out and "&gt;" in out
+
+
+class TestTfoot:
+    """Source and footnotes produce a <tfoot>; absence omits it."""
+
+    def test_no_tfoot_when_no_source_no_footnotes(self):
+        table = _table_with_meta({"title": "title only"})
+        root = _parse(render_html(table))
+        assert root.find("tfoot") is None
+
+    def test_no_tfoot_when_meta_is_empty(self):
+        table = _table_with_meta({})
+        root = _parse(render_html(table))
+        assert root.find("tfoot") is None
+
+    def test_no_tfoot_when_footnotes_is_empty_list(self):
+        table = _table_with_meta({"footnotes": []})
+        root = _parse(render_html(table))
+        assert root.find("tfoot") is None
+
+    def test_source_only_emits_single_source_row(self):
+        table = _table_with_meta({"source": "internal CRM"})
+        root = _parse(render_html(table))
+        tfoot = root.find("tfoot")
+        assert tfoot is not None
+        rows = list(tfoot.findall("tr"))
+        assert len(rows) == 1
+        assert rows[0].get("class") == "proctab-source"
+        td = rows[0].find("td")
+        assert td.text == "Source: internal CRM"
+
+    def test_footnotes_only_emit_footnote_rows(self):
+        table = _table_with_meta(
+            {"footnotes": ["note one", "note two", "note three"]}
+        )
+        root = _parse(render_html(table))
+        tfoot = root.find("tfoot")
+        assert tfoot is not None
+        rows = list(tfoot.findall("tr"))
+        assert len(rows) == 3
+        for r in rows:
+            assert r.get("class") == "proctab-footnote"
+        texts = [r.find("td").text for r in rows]
+        assert texts == ["note one", "note two", "note three"]
+
+    def test_source_renders_before_footnotes(self):
+        # Locked schematic order: <tr.proctab-source> then <tr.proctab-footnote>.
+        table = _table_with_meta(
+            {"source": "src", "footnotes": ["fn1", "fn2"]}
+        )
+        root = _parse(render_html(table))
+        tfoot = root.find("tfoot")
+        rows = list(tfoot.findall("tr"))
+        assert [r.get("class") for r in rows] == [
+            "proctab-source",
+            "proctab-footnote",
+            "proctab-footnote",
+        ]
+
+    def test_tfoot_td_colspan_equals_one_plus_col_leaves(self):
+        # 1 row-label column + n col leaves; test with a 4-col fixture.
+        table = _build_one_row_table(
+            body=[1.0, 2.0, 3.0, 4.0],
+            missing_codes=[int(MissingReason.PRESENT)] * 4,
+            col_labels=["a", "b", "c", "d"],
+        )
+        # Substitute in a meta with source + footnote.
+        table = Table(
+            row_axis=table.row_axis,
+            col_axis=table.col_axis,
+            body=table.body,
+            missing=table.missing,
+            value_kinds=table.value_kinds,
+            formats=table.formats,
+            meta={"source": "s", "footnotes": ["f"]},
+        )
+        root = _parse(render_html(table))
+        tfoot = root.find("tfoot")
+        for r in tfoot.findall("tr"):
+            td = r.find("td")
+            assert td.get("colspan") == "5"  # 1 + 4
+
+    def test_source_text_is_escaped(self):
+        table = _table_with_meta({"source": "A & B <c>"})
+        out = render_html(table)
+        root = _parse(out)
+        td = root.find("tfoot").find("tr").find("td")
+        assert td.text == "Source: A & B <c>"
+        assert "&amp;" in out and "&lt;" in out
+
+    def test_footnote_text_is_escaped(self):
+        table = _table_with_meta({"footnotes": ["x < y && z"]})
+        out = render_html(table)
+        root = _parse(out)
+        td = root.find("tfoot").find("tr").find("td")
+        assert td.text == "x < y && z"
+        assert "&amp;" in out and "&lt;" in out
+
+
+class TestRenderHtmlMetaIntegration:
+    """Integration: example_5_customized exercises caption + source + footnotes."""
+
+    def setup_method(self):
+        self.out = render_html(example_5_customized())
+        self.root = _parse(self.out)
+
+    def test_caption_text_matches_example_title(self):
+        cap = self.root.find("caption")
+        assert cap is not None
+        assert cap.text == "Net Revenue by Region"
+
+    def test_tfoot_has_source_then_footnote(self):
+        tfoot = self.root.find("tfoot")
+        assert tfoot is not None
+        rows = list(tfoot.findall("tr"))
+        assert [r.get("class") for r in rows] == [
+            "proctab-source",
+            "proctab-footnote",
+        ]
+
+    def test_caption_renders_before_thead(self):
+        # HTML spec requires <caption> immediately inside <table>, before <thead>.
+        children = list(self.root)
+        tags = [c.tag for c in children]
+        # tags should look like ['caption', 'thead', 'tbody', 'tfoot']
+        assert tags.index("caption") < tags.index("thead")
+
+    def test_tfoot_renders_after_tbody(self):
+        children = list(self.root)
+        tags = [c.tag for c in children]
+        assert tags.index("tbody") < tags.index("tfoot")
