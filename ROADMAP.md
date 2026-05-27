@@ -47,9 +47,15 @@ First release someone might actually try. Each feature gets a design memo before
 
 ### HTML renderer
 
-- [ ] Draft design memo: `HTML_RENDERER.md` (single default theme for v0.1)
-- [ ] Notebook `_repr_html_` wiring
-- [ ] Standalone `.to_html(path)` output
+- [x] Lock design memo: [HTML_RENDERER.md](HTML_RENDERER.md)
+- [ ] **H1.** Module skeleton + format-resolution helper. Create `src/legible/render/html.py` with `render_html(table, *, standalone=False) -> str` (stub `<table></table>` for now) and the per-cell format resolver (explicit `formats[j]` → value_kind default → `{:g}` fallback per [Format resolution](HTML_RENDERER.md#format-resolution)).
+- [ ] **H2.** Column header rendering. One `<tr>` per col-axis dim depth; interior nodes → `<th colspan="node.span" scope="colgroup">`; innermost leaves → `<th scope="col">`; top-left corner → `<th rowspan="n_header_rows" class="legible-corner" aria-hidden="true">` (no `scope=`). All `legible-` prefixed classes per role.
+- [ ] **H3.** Body rendering — single ticket combining row-tree pre-order traversal and per-cell emission. Interior nodes emit a two-cell group-header `<tr>` (label `<th scope="rowgroup">` + colspan-padding `<td>`); leaves emit the full data `<tr>` with row-label `<th scope="row">` plus one `<td>` per col leaf. Cells dispatch on `MissingReason`, apply the format resolver, escape via `html.escape`, and emit `data-value="{format(float(v), '.17g')}"` for finite-PRESENT numerics. Skip `data-value` for non-finite PRESENT or missing cells.
+- [ ] **H4.** Caption + tfoot. Emit `<caption class="legible-caption">` from `table.meta.get("title")`; emit `<tfoot>` with one `<tr class="legible-source">` per `source` and one `<tr class="legible-footnote">` per `footnote`. Omit `<caption>` and `<tfoot>` entirely when those keys are absent. HTML-escape all values.
+- [ ] **H5.** Default styling. Embedded `<style>` block for standalone mode (font, alignment, borders, total/subtotal emphasis, prefix-scoped selectors like `.legible-cell`, `.legible-total`). Inline equivalents (mirroring the same rules) for fragment mode.
+- [ ] **H6.** Standalone wrapper: `<!DOCTYPE>` + `<head>` (charset, `<title>` from `table.meta.get("title")`, embedded style) + `<body>` containing the fragment.
+- [ ] **H7.** Wire `Table._repr_html_()` (always fragment) and `Table.to_html(path=None)` (always standalone) to `render_html`. Lazy-import to avoid circular deps. Confirm the `to_html(path=None) → str` / `to_html(path="…") → None` contract; accept `str | os.PathLike[str]` for `path`.
+- [ ] **H8.** Tests. Parse output with `html.parser` or `xml.etree` rather than substring-matching. Assertions: `<table>` root; expected `<thead>`/`<tbody>`/`<tfoot>` shape; correct `colspan`/`rowspan`/`scope` per header; `legible-` class hierarchy per role; `data-value` present on finite-PRESENT and absent on missing-or-non-finite; MissingReason display text matches the table. Integration tests render `examples.py` fixtures and parse the result. Edge cases: empty Table, HTML-sensitive content (`<`, `&`, `"`, `'` in labels/titles/footnotes), missing-reason variants, non-finite PRESENT.
 
 ### Excel renderer
 
