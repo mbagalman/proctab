@@ -17,7 +17,7 @@ import narwhals.stable.v1 as nw
 import numpy as np
 
 from legible._categories import is_null, normalize, resolve_categories
-from legible.model import Category
+from legible.model import Category, MissingReason
 
 
 SUPPORTED_STATS: frozenset[str] = frozenset({
@@ -714,3 +714,278 @@ def aggregate_totals(
         grand_col=grand_col,
         grand_cell=grand_cell,
     )
+
+
+# === T4c: body assembly + MissingReason assignment =========================
+
+
+@dataclass(frozen=True)
+class RowLeafEntry:
+    """Layout entry for one row leaf in the assembled body.
+
+    `role` selects which fields are meaningful:
+    - `"data"`: `data_row_idx` (into `AggregateResult.stat_values` axis 0)
+    - `"subtotal"`: `subtotal_dim` + `subtotal_row_idx` (into
+      `TotalsResult.subtotals_data_cols[dim].stat_values` axis 0)
+    - `"total"`: no further fields
+    """
+    role: str
+    data_row_idx: int | None = None
+    subtotal_dim: str | None = None
+    subtotal_row_idx: int | None = None
+
+
+@dataclass(frozen=True)
+class ColLeafEntry:
+    """Layout entry for one col leaf in the assembled body.
+
+    `role` selects which T4b section a (row.role, col.role) pair fetches
+    from. `col_group_idx` is the col-dim cross-product position (0 when
+    `spec.cols` is empty); `stat_idx` is the index into
+    `spec.values_spec`.
+    """
+    role: str
+    col_group_idx: int
+    stat_idx: int
+
+
+@dataclass(frozen=True)
+class TabulateAssembled:
+    """Final body + missing matrices for the Table, plus the layouts T5
+    will consume to build the row / col `Axis` trees.
+
+    `body[i, j]` and `missing[i, j]` correspond to the cell at
+    `row_layout[i]` × `col_layout[j]`. T5 doesn't recompute layout from
+    spec — it walks these tuples in order.
+    """
+    body: np.ndarray
+    missing: np.ndarray
+    row_layout: tuple[RowLeafEntry, ...]
+    col_layout: tuple[ColLeafEntry, ...]
+
+
+def assemble_body(
+    data_result: AggregateResult,
+    totals_result: TotalsResult,
+    spec: TabSpec,
+) -> TabulateAssembled:
+    """Assemble the final body + missing matrices from T4a + T4b outputs.
+
+    The (row.role, col.role) of each cell selects one of six source
+    sections; the per-cell `MissingReason` is assigned per the
+    TABULATE_API priority: row_count=0 → EMPTY, then non-null=0 (except
+    for the `count` stat) → NULL, otherwise PRESENT with the stored
+    value.
+    """
+    row_layout = _build_row_layout(spec, data_result)
+    col_layout = _build_col_layout(spec, data_result)
+
+    n_rows = len(row_layout)
+    n_cols = len(col_layout)
+
+    body = np.zeros((n_rows, n_cols), dtype=np.float64)
+    missing = np.zeros((n_rows, n_cols), dtype=np.uint8)
+
+    if n_rows == 0 or n_cols == 0:
+        return TabulateAssembled(
+            body=body, missing=missing,
+            row_layout=row_layout, col_layout=col_layout,
+        )
+
+    metric_idx_by_name = {m: i for i, m in enumerate(data_result.metric_names)}
+
+    for i, row_entry in enumerate(row_layout):
+        for j, col_entry in enumerate(col_layout):
+            _fill_cell(
+                body, missing, i, j,
+                row_entry, col_entry,
+                data_result, totals_result, spec,
+                metric_idx_by_name,
+            )
+
+    return TabulateAssembled(
+        body=body, missing=missing,
+        row_layout=row_layout, col_layout=col_layout,
+    )
+
+
+def _build_row_layout(
+    spec: TabSpec, data_result: AggregateResult,
+) -> tuple[RowLeafEntry, ...]:
+    """Build the ordered row leaf layout per TABULATE_API conventions.
+
+    1-row case: data leaves in row category order, then optional Total.
+    2-row case with subtotal at outer dim: for each outer cat, all inner
+    cats (data leaves), then a subtotal leaf for that outer cat. Grand
+    total leaf appended last (when totals=True and ≥1 row leaf exists).
+    """
+    layout: list[RowLeafEntry] = []
+    row_cats = data_result.row_categories
+    if not row_cats:
+        return tuple(layout)
+
+    n_dims = len(row_cats)
+    sizes = [len(c) for c in row_cats]
+    has_data = _product(sizes) > 0
+
+    if n_dims == 1:
+        for r in range(sizes[0]):
+            layout.append(RowLeafEntry(role="data", data_row_idx=r))
+    else:
+        # 2-dim row case (v0.1 cap). row-major flat order matches T4a.
+        outer_size, inner_size = sizes
+        has_subtotal = bool(spec.subtotals)
+        # v0.1: only outer-dim subtotals are allowed (innermost is rejected
+        # by T2). subtotal_dim is the outer dim name when present.
+        subtotal_dim = spec.subtotals[0] if has_subtotal else None
+        for outer_i in range(outer_size):
+            for inner_i in range(inner_size):
+                data_idx = outer_i * inner_size + inner_i
+                layout.append(RowLeafEntry(role="data", data_row_idx=data_idx))
+            if has_subtotal:
+                layout.append(RowLeafEntry(
+                    role="subtotal",
+                    subtotal_dim=subtotal_dim,
+                    subtotal_row_idx=outer_i,
+                ))
+
+    if spec.totals and has_data:
+        layout.append(RowLeafEntry(role="total"))
+
+    return tuple(layout)
+
+
+def _build_col_layout(
+    spec: TabSpec, data_result: AggregateResult,
+) -> tuple[ColLeafEntry, ...]:
+    """Build the ordered col leaf layout.
+
+    Per the TABULATE_API ordering contract, the col hierarchy is
+    `user_cols → _metric → _stat`. Each user col category expands into
+    `len(spec.values_spec)` stat leaves. A Total-col block is appended
+    when `spec.totals AND spec.cols AND data is non-empty on both axes`.
+    """
+    layout: list[ColLeafEntry] = []
+    col_cats = data_result.col_categories
+    n_stats = len(spec.values_spec)
+    n_rows_data, n_cols_data, _ = data_result.stat_values.shape
+
+    if col_cats:
+        # cols= non-empty; v0.1 has at most 1 col dim
+        n_col_cats = len(col_cats[0])
+        for c_i in range(n_col_cats):
+            for s in range(n_stats):
+                layout.append(ColLeafEntry(
+                    role="data", col_group_idx=c_i, stat_idx=s,
+                ))
+        # Total col only when totals + cols + non-empty on both axes
+        if (spec.totals and n_cols_data > 0 and n_rows_data > 0):
+            for s in range(n_stats):
+                layout.append(ColLeafEntry(
+                    role="total", col_group_idx=0, stat_idx=s,
+                ))
+    else:
+        # cols=() → just one implicit col group, no Total col
+        for s in range(n_stats):
+            layout.append(ColLeafEntry(
+                role="data", col_group_idx=0, stat_idx=s,
+            ))
+
+    return tuple(layout)
+
+
+def _fill_cell(
+    body: np.ndarray,
+    missing: np.ndarray,
+    i: int,
+    j: int,
+    row_entry: RowLeafEntry,
+    col_entry: ColLeafEntry,
+    data_result: AggregateResult,
+    totals_result: TotalsResult,
+    spec: TabSpec,
+    metric_idx_by_name: dict[str, int],
+) -> None:
+    """Dispatch a single cell to its source section, then apply
+    MissingReason priority."""
+    section = _select_section(row_entry, col_entry, data_result, totals_result)
+    r_idx, c_idx = _section_indices(row_entry, col_entry)
+    s_idx = col_entry.stat_idx
+
+    metric, stat = spec.values_spec[s_idx]
+    metric_idx = metric_idx_by_name[metric]
+
+    rc = section.row_count[r_idx, c_idx]
+    if rc == 0:
+        missing[i, j] = MissingReason.EMPTY
+        return
+
+    nnc = section.nonnull_count[r_idx, c_idx, metric_idx]
+    if nnc == 0 and stat != "count":
+        # All metric values null in a non-empty group. 'count' is the
+        # exception: it correctly reports 0 in this case (a meaningful
+        # answer, not missing data).
+        missing[i, j] = MissingReason.NULL
+        return
+
+    body[i, j] = section.stat_values[r_idx, c_idx, s_idx]
+
+
+def _select_section(
+    row_entry: RowLeafEntry,
+    col_entry: ColLeafEntry,
+    data_result: AggregateResult,
+    totals_result: TotalsResult,
+) -> "_SectionLike":
+    """Return the (stat_values, row_count, nonnull_count)-bearing object
+    for this cell's (row.role, col.role) pair."""
+    rr, cr = row_entry.role, col_entry.role
+    if rr == "data" and cr == "data":
+        return _SectionView(
+            data_result.stat_values, data_result.row_count, data_result.nonnull_count,
+        )
+    if rr == "data" and cr == "total":
+        return totals_result.grand_col  # type: ignore[return-value]
+    if rr == "subtotal" and cr == "data":
+        return totals_result.subtotals_data_cols[row_entry.subtotal_dim]
+    if rr == "subtotal" and cr == "total":
+        return totals_result.subtotals_total_col[row_entry.subtotal_dim]
+    if rr == "total" and cr == "data":
+        return totals_result.grand_row  # type: ignore[return-value]
+    if rr == "total" and cr == "total":
+        return totals_result.grand_cell  # type: ignore[return-value]
+    raise RuntimeError(f"Unhandled (row, col) role pair: ({rr}, {cr})")
+
+
+def _section_indices(
+    row_entry: RowLeafEntry, col_entry: ColLeafEntry,
+) -> tuple[int, int]:
+    """Compute (r_idx, c_idx) into the selected section's arrays."""
+    if row_entry.role == "data":
+        r = row_entry.data_row_idx
+    elif row_entry.role == "subtotal":
+        r = row_entry.subtotal_row_idx
+    else:  # total
+        r = 0
+
+    if col_entry.role == "data":
+        c = col_entry.col_group_idx
+    else:  # total
+        c = 0
+
+    return r, c
+
+
+class _SectionView:
+    """Adapter giving an `AggregateResult` the same attribute surface
+    as `SectionResult`. Lets `_select_section()` return a uniform type
+    regardless of whether the section comes from T4a or T4b."""
+    __slots__ = ("stat_values", "row_count", "nonnull_count")
+
+    def __init__(self, stat_values, row_count, nonnull_count):
+        self.stat_values = stat_values
+        self.row_count = row_count
+        self.nonnull_count = nonnull_count
+
+
+_SectionLike = Any  # SectionResult or _SectionView; same attribute surface

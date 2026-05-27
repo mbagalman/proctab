@@ -24,7 +24,8 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_stats.py -v)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_aggregate.py -v)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_totals.py -v)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_aggregate.py::TestPandasNullableNA tests/test_freq_aggregate.py::TestNullHandling -v)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_aggregate.py::TestPandasNullableNA tests/test_freq_aggregate.py::TestNullHandling -v)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_tabulate_assemble.py -v)"
     ],
     "additionalDirectories": [
       "c:\\Users\\micha\\.claude\\projects\\c--Users-micha-Documents-GitHub-Legible\\memory"
