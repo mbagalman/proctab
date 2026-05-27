@@ -9,8 +9,9 @@ MissingReason dispatch and number-format application) + E4 (title at
 row 1; source/footnote rows after the body, merged across body cols
 with wrap) + E5 (default theme — Font/Border/Alignment per role/missing
 modifier composed from a single source-of-truth registry, analogous to
-the HTML renderer's `_STYLE_BY_CLASS`). E6-E7 add frozen pane / column
-widths and the Table method wiring. openpyxl is an optional extra — install via
+the HTML renderer's `_STYLE_BY_CLASS`) + E6 (frozen pane at
+`B{body_start}`, column A width sized to the longest row label capped at
+40, body columns at default width 12). E7 wires the Table method. openpyxl is an optional extra — install via
 `pip install proctab[excel]`. The function-level entry point and the
 Table method both lazy-import openpyxl, so `import proctab` works in
 environments without it.
@@ -287,6 +288,56 @@ def _node_label(node: Node) -> str:
     if isinstance(el, SubtotalMarker):
         return f"{el.at_dim} Subtotal"
     return ""
+
+
+# ---------------------------------------------------------------------------
+# E6 — Frozen pane + column widths.
+#
+# `freeze_panes = f"B{body_start}"` freezes title + headers + the
+# row-label column so analysts can scroll the body without losing
+# context. Column A is sized to the longest row label (capped at 40);
+# body columns get a fixed default width of 12. A real autofit pass is
+# v0.2.
+# ---------------------------------------------------------------------------
+
+
+_BODY_COL_DEFAULT_WIDTH = 12.0
+_ROW_LABEL_MIN_WIDTH = 8.0
+_ROW_LABEL_MAX_WIDTH = 40.0
+_INDENT_VISUAL_WIDTH = 3  # ~chars per indent level visually
+
+
+def _col_a_width(table: Table) -> float:
+    """Column A width sized to the longest row label, including indent
+    contribution. Floored at `_ROW_LABEL_MIN_WIDTH`, capped at
+    `_ROW_LABEL_MAX_WIDTH`. Returns the default for empty row axes."""
+    widths: list[int] = []
+    for node in _walk_nonroot(table.row_axis.tree):
+        label = _node_label(node)
+        indent = max(node.depth - 1, 0)
+        # +2 padding so the label doesn't touch the column edge.
+        widths.append(len(label) + _INDENT_VISUAL_WIDTH * indent + 2)
+    if not widths:
+        return _BODY_COL_DEFAULT_WIDTH
+    raw = max(widths)
+    return float(min(max(raw, _ROW_LABEL_MIN_WIDTH), _ROW_LABEL_MAX_WIDTH))
+
+
+def _set_column_widths(ws, table: Table, layout: _Layout) -> None:
+    from openpyxl.utils import get_column_letter
+
+    ws.column_dimensions["A"].width = _col_a_width(table)
+    for j in range(layout.n_col_leaves):
+        ws.column_dimensions[get_column_letter(2 + j)].width = (
+            _BODY_COL_DEFAULT_WIDTH
+        )
+
+
+def _set_freeze_pane(ws, layout: _Layout) -> None:
+    """Freeze title + headers + column A. Per the locked memo, the
+    freeze anchor is `f"B{body_start}"` — cells above/left of B{body_start}
+    stay visible as the body scrolls."""
+    ws.freeze_panes = f"B{layout.body_start}"
 
 
 # ---------------------------------------------------------------------------
@@ -578,5 +629,8 @@ def render_excel(
     _write_thead(ws, table.col_axis, layout)
     body_end = _write_tbody(ws, table, layout)
     _write_tfoot(ws, table, layout, body_end)
+
+    _set_column_widths(ws, table, layout)
+    _set_freeze_pane(ws, layout)
 
     wb.save(path)

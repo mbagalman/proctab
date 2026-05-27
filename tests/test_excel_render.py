@@ -1419,3 +1419,192 @@ class TestTotalColLeftEdgesHelper:
         empty_tree = Node(path=(), depth=0, span=0, role="data", children=())
         empty_axis = Axis(dims=(empty_dim,), tree=empty_tree)
         assert _total_col_left_edges(empty_axis) == set()
+
+
+# ---------------------------------------------------------------------------
+# E6 — frozen pane + column widths.
+# ---------------------------------------------------------------------------
+
+
+def _freeze_pane(ws):
+    """Normalize openpyxl's freeze_panes accessor (may be Cell or str)."""
+    fp = ws.freeze_panes
+    if fp is None:
+        return None
+    return str(fp)
+
+
+class TestFreezePane:
+    """`ws.freeze_panes = f"B{body_start}"` — freezes title + headers
+    + the row-label column."""
+
+    @pytest.mark.parametrize(
+        "fixture,expected_anchor",
+        [
+            # title present (header_start=3), H=1 → body_start=4
+            (example_1_one_way_freq, "B4"),
+            # title present, H=2 → body_start=5
+            (example_1b_two_way_freq, "B5"),
+            # no title (header_start=1), H=3 → body_start=4
+            (example_2_tabulate_v01, "B4"),
+            # title present, H=1 → body_start=4
+            (example_5_customized, "B4"),
+        ],
+    )
+    def test_freeze_anchor_matches_body_start(
+        self, fixture, expected_anchor, tmp_path: pathlib.Path
+    ):
+        ws = _render_and_load(fixture(), tmp_path)
+        assert _freeze_pane(ws) == expected_anchor
+
+
+class TestColumnAWidth:
+    """Column A width: longest row label (+indent contribution +padding),
+    floored at 8, capped at 40."""
+
+    def test_minimum_width_for_short_labels(
+        self, tmp_path: pathlib.Path
+    ):
+        # example_1_one_way_freq: labels are short ("West", "Total", etc.)
+        # → falls to minimum 8.
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        assert ws.column_dimensions["A"].width == 8.0
+
+    def test_width_scales_with_indented_labels(
+        self, tmp_path: pathlib.Path
+    ):
+        # example_2_tabulate_v01: longest indented label is
+        # "Grand Total" (11 chars) at depth 2 → indent 1 ×3 = 3 visual
+        # → +2 padding → 16.
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        assert ws.column_dimensions["A"].width == 16.0
+
+    def test_width_capped_at_40(self, tmp_path: pathlib.Path):
+        # Build a Table with a very long row label.
+        from proctab.model import Axis, Category, Dimension, Node, Table
+        long_label = "x" * 80
+        cat = Category(long_label)
+        row_dim = Dimension(name="r", kind="category", categories=(cat,))
+        row_leaf = Node(path=(cat,), depth=1, span=1, role="data")
+        row_tree = Node(
+            path=(), depth=0, span=1, role="data", children=(row_leaf,)
+        )
+        col_cat = Category("x")
+        col_dim = Dimension(name="c", kind="category", categories=(col_cat,))
+        col_leaf = Node(path=(col_cat,), depth=1, span=1, role="data")
+        col_tree = Node(
+            path=(), depth=0, span=1, role="data", children=(col_leaf,)
+        )
+        table = Table(
+            row_axis=Axis(dims=(row_dim,), tree=row_tree),
+            col_axis=Axis(dims=(col_dim,), tree=col_tree),
+            body=np.array([[1.0]], dtype=np.float64),
+            missing=np.array([[0]], dtype=np.uint8),
+            value_kinds=("raw",),
+            formats=(None,),
+        )
+        ws = _render_and_load(table, tmp_path)
+        assert ws.column_dimensions["A"].width == 40.0
+
+    def test_width_for_empty_row_axis_uses_default(
+        self, tmp_path: pathlib.Path
+    ):
+        # Synthesize a 0-row Table (no row leaves) — _col_a_width
+        # falls back to _BODY_COL_DEFAULT_WIDTH (12).
+        from proctab.model import Axis, Category, Dimension, Node, Table
+        empty_row_dim = Dimension(
+            name="r", kind="category", categories=()
+        )
+        empty_row_tree = Node(
+            path=(), depth=0, span=0, role="data", children=()
+        )
+        col_cat = Category("x")
+        col_dim = Dimension(
+            name="c", kind="category", categories=(col_cat,)
+        )
+        col_leaf = Node(path=(col_cat,), depth=1, span=1, role="data")
+        col_tree = Node(
+            path=(), depth=0, span=1, role="data", children=(col_leaf,)
+        )
+        table = Table(
+            row_axis=Axis(dims=(empty_row_dim,), tree=empty_row_tree),
+            col_axis=Axis(dims=(col_dim,), tree=col_tree),
+            body=np.empty((0, 1), dtype=np.float64),
+            missing=np.empty((0, 1), dtype=np.uint8),
+            value_kinds=("raw",),
+            formats=(None,),
+        )
+        ws = _render_and_load(table, tmp_path)
+        assert ws.column_dimensions["A"].width == 12.0
+
+
+class TestBodyColumnWidths:
+    """All body columns (B through last_body_col) get the fixed
+    default width."""
+
+    @pytest.mark.parametrize(
+        "fixture",
+        [
+            example_1_one_way_freq,
+            example_1b_two_way_freq,
+            example_2_tabulate_v01,
+            example_5_customized,
+        ],
+    )
+    def test_every_body_col_width_is_12(
+        self, fixture, tmp_path: pathlib.Path
+    ):
+        openpyxl = pytest.importorskip("openpyxl")
+        table = fixture()
+        ws = _render_and_load(table, tmp_path)
+        n_col_leaves = len(table.col_axis.leaves())
+        for j in range(n_col_leaves):
+            letter = openpyxl.utils.get_column_letter(2 + j)
+            assert ws.column_dimensions[letter].width == 12.0
+
+
+class TestEmptyTableE6:
+    """E6 helpers don't crash on empty Tables."""
+
+    def _empty_axis_table(self):
+        from proctab.model import Axis, Category, Dimension, Node, Table
+        row_dim = Dimension(
+            name="region", kind="category", categories=(Category("W"),)
+        )
+        row_leaf = Node(
+            path=(Category("W"),), depth=1, span=1, role="data"
+        )
+        row_tree = Node(
+            path=(), depth=0, span=1, role="data", children=(row_leaf,)
+        )
+        empty_col_dim = Dimension(
+            name="c", kind="category", categories=()
+        )
+        empty_col_tree = Node(
+            path=(), depth=0, span=0, role="data", children=()
+        )
+        return Table(
+            row_axis=Axis(dims=(row_dim,), tree=row_tree),
+            col_axis=Axis(dims=(empty_col_dim,), tree=empty_col_tree),
+            body=np.empty((1, 0), dtype=np.float64),
+            missing=np.empty((1, 0), dtype=np.uint8),
+            value_kinds=(),
+            formats=(),
+        )
+
+    def test_freeze_pane_set_even_when_empty(
+        self, tmp_path: pathlib.Path
+    ):
+        ws = _render_and_load(self._empty_axis_table(), tmp_path)
+        # With H=1 and no title: body_start = 1 + 1 = 2
+        assert _freeze_pane(ws) == "B2"
+
+    def test_column_a_still_sized_when_body_empty(
+        self, tmp_path: pathlib.Path
+    ):
+        ws = _render_and_load(self._empty_axis_table(), tmp_path)
+        # Row "W" exists in the row axis even though col axis is empty;
+        # _col_a_width still computes from it. Min floor of 8 applies.
+        assert ws.column_dimensions["A"].width == 8.0
