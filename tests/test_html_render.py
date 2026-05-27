@@ -1,4 +1,4 @@
-"""Tests for the HTML renderer (H1 + H2 + H3 + H4 + H5 + H6).
+"""Tests for the HTML renderer (H1 + H2 + H3 + H4 + H5 + H6 + H7).
 
 Contract source: docs/HTML_RENDERER.md.
 
@@ -1306,3 +1306,116 @@ class TestRenderHtmlModeSeparation:
             )
         )
         assert fragment.get("class") == standalone.get("class") == "proctab"
+
+
+# ---------------------------------------------------------------------------
+# H7 — Table._repr_html_ and Table.to_html method wiring.
+# ---------------------------------------------------------------------------
+
+
+import pathlib
+
+
+class TestReprHtml:
+    """`Table._repr_html_` is the Jupyter hook — always returns a fragment."""
+
+    def test_returns_string(self):
+        out = example_5_customized()._repr_html_()
+        assert isinstance(out, str)
+
+    def test_matches_render_html_fragment_output(self):
+        table = example_5_customized()
+        assert table._repr_html_() == render_html(table, standalone=False)
+
+    def test_no_doctype_or_html_wrapper(self):
+        out = example_5_customized()._repr_html_()
+        assert "<!DOCTYPE" not in out
+        assert "<html" not in out
+        assert "<body" not in out
+
+    def test_has_inline_styles_for_notebook_isolation(self):
+        # The whole reason notebooks need fragments with inline styles.
+        out = example_1_one_way_freq()._repr_html_()
+        root = _parse(out)
+        assert root.get("style") is not None
+
+
+class TestToHtmlReturnsString:
+    """`Table.to_html(path=None)` returns the standalone HTML string."""
+
+    def test_returns_string_when_no_path(self):
+        out = example_5_customized().to_html()
+        assert isinstance(out, str)
+
+    def test_matches_render_html_standalone_output(self):
+        table = example_5_customized()
+        assert table.to_html() == render_html(table, standalone=True)
+
+    def test_starts_with_doctype(self):
+        out = example_5_customized().to_html()
+        assert out.startswith("<!DOCTYPE html>")
+
+    def test_inner_table_is_class_only(self):
+        out = example_5_customized().to_html()
+        root = _parse(_extract_table_from_standalone(out))
+        assert root.get("style") is None
+
+
+class TestToHtmlWritesFile:
+    """`Table.to_html(path=...)` writes to file and returns None."""
+
+    def test_returns_none_when_path_given(self, tmp_path: pathlib.Path):
+        out = example_5_customized().to_html(tmp_path / "out.html")
+        assert out is None
+
+    def test_writes_standalone_document_to_path(self, tmp_path: pathlib.Path):
+        path = tmp_path / "out.html"
+        example_5_customized().to_html(path)
+        assert path.exists()
+        content = path.read_text(encoding="utf-8")
+        assert content.startswith("<!DOCTYPE html>")
+
+    def test_file_content_matches_no_path_return(self, tmp_path: pathlib.Path):
+        table = example_5_customized()
+        path = tmp_path / "out.html"
+        table.to_html(path)
+        assert path.read_text(encoding="utf-8") == table.to_html()
+
+    def test_accepts_string_path(self, tmp_path: pathlib.Path):
+        # path: str | os.PathLike[str] — both supported.
+        path = tmp_path / "out_str.html"
+        rv = example_5_customized().to_html(str(path))
+        assert rv is None
+        assert path.exists()
+
+    def test_accepts_pathlib_path(self, tmp_path: pathlib.Path):
+        path = tmp_path / "out_pl.html"
+        rv = example_5_customized().to_html(path)
+        assert rv is None
+        assert path.exists()
+
+    def test_writes_utf8_encoded(self, tmp_path: pathlib.Path):
+        # Test with a title containing non-ASCII characters.
+        from proctab.model import Table
+        base = _build_one_row_table(
+            body=[1.0],
+            missing_codes=[int(MissingReason.PRESENT)],
+            col_labels=["x"],
+        )
+        table = Table(
+            row_axis=base.row_axis,
+            col_axis=base.col_axis,
+            body=base.body,
+            missing=base.missing,
+            value_kinds=base.value_kinds,
+            formats=base.formats,
+            meta={"title": "Café — résumé"},
+        )
+        path = tmp_path / "utf8.html"
+        table.to_html(path)
+        raw_bytes = path.read_bytes()
+        # UTF-8 encoding of the title should round-trip through bytes.
+        assert "Café — résumé".encode("utf-8") in raw_bytes
+        # And the file should decode cleanly as utf-8.
+        text = path.read_text(encoding="utf-8")
+        assert "Café — résumé" in text

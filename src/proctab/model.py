@@ -1,12 +1,13 @@
 """Pure data containers for the proctab table model.
 
-See ../../TABLE_MODEL.md for the design rationale. This module defines the
-in-memory shape of a `Table` and the types it composes; it does NOT perform
-any aggregation, rendering, or DataFrame I/O.
+See ../../docs/TABLE_MODEL.md for the design rationale. This module defines
+the in-memory shape of a `Table` and the types it composes; it does NOT
+perform any aggregation, rendering, or DataFrame I/O.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Literal, Union
@@ -263,3 +264,37 @@ class Table:
         """Plain-text render. Convenience wrapper around `proctab.render.text.render_text`."""
         from proctab.render.text import render_text
         return render_text(self, **kwargs)
+
+    def _repr_html_(self) -> str:
+        """Jupyter / IPython auto-render hook. Returns an HTML fragment.
+
+        Notebooks call this automatically when a `Table` is the last
+        expression in a cell. For programmatic export use `to_html(...)`;
+        for an embeddable fragment via the function API call
+        `proctab.render.html.render_html(table, standalone=False)`.
+        """
+        from proctab.render.html import render_html
+        return render_html(self, standalone=False)
+
+    def to_html(
+        self, path: str | os.PathLike[str] | None = None
+    ) -> str | None:
+        """Render to standalone HTML.
+
+        Always produces a full HTML5 document (DOCTYPE + head + body +
+        embedded styling). For an embeddable fragment, rely on
+        `_repr_html_()` in notebooks or call
+        `proctab.render.html.render_html(table, standalone=False)` directly.
+
+        If `path` is None (default), returns the HTML string.
+        If `path` is given (str or os.PathLike), writes the HTML to that
+        file and returns None — matches the `pandas.DataFrame.to_csv()`
+        convention.
+        """
+        from proctab.render.html import render_html
+        html = render_html(self, standalone=True)
+        if path is None:
+            return html
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html)
+        return None
