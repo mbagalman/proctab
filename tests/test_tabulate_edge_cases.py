@@ -304,6 +304,105 @@ class TestLevelsSubsetFilter:
         assert table.body[0, 0] == 160.0
 
 
+class TestLevelsRespectedInTotals:
+    """Reviewer P1 regression: total sections collapse one or both axes
+    (no key in the groupby). Without a pre-filter, source rows whose
+    values were excluded by `levels=` still leak into those totals.
+
+    Three failure modes, one fix:
+    - grand_row collapses row keys → pulls in filtered rows
+    - grand_col (or subtotal_total_col) collapses col keys → pulls in
+      filtered cols
+    - subtotal_data_cols collapses inner-row dims → pulls in filtered
+      inner-row values
+    """
+
+    def test_grand_total_respects_row_levels_filter(self):
+        """The reviewer's exact reproducer: with only East displayed,
+        the Total row should report East's revenue, not the full sum."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region": ["East", "West"],
+            "revenue": [10.0, 90.0],
+        })
+        table = lg.tabulate(
+            df, rows="region",
+            levels={"region": ["East"]},
+            values={"revenue": "sum"}, totals=True,
+        )
+        # Row leaves: East, Total
+        assert table.body[0, 0] == 10.0  # East
+        assert table.body[1, 0] == 10.0  # Total — was 100 before fix
+
+    def test_total_col_respects_col_levels_filter(self):
+        """Filter on col dim should propagate to the Total col, not just
+        to the displayed quarter columns."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region":  ["E", "E", "E", "E"],
+            "quarter": ["Q1", "Q2", "Q3", "Q4"],
+            "revenue": [10.0, 20.0, 30.0, 40.0],
+        })
+        table = lg.tabulate(
+            df, rows="region", cols="quarter",
+            levels={"quarter": ["Q1"]},
+            values={"revenue": "sum"}, totals=True,
+        )
+        # Layout: row=[E, Total], col=[Q1, Total]; shape (2, 2)
+        # Without the fix, the Total col would be 100 (sum of all
+        # quarters), not 10 (Q1 only).
+        assert table.body[0, 0] == 10.0  # E/Q1
+        assert table.body[0, 1] == 10.0  # E/Total
+        assert table.body[1, 0] == 10.0  # Total/Q1
+        assert table.body[1, 1] == 10.0  # Total/Total
+
+    def test_subtotal_respects_inner_row_levels_filter(self):
+        """Subtotal at the outer dim consolidates the inner dim. If
+        the inner dim is filtered, the subtotal must respect that
+        filter (the subtotal section's groupby doesn't include the
+        inner dim, so without the pre-filter it would aggregate
+        excluded inner-dim values too)."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region":  ["E", "E", "E"],
+            "product": ["A", "B", "A"],
+            "revenue": [10.0, 20.0, 30.0],
+        })
+        table = lg.tabulate(
+            df, rows=["region", "product"],
+            levels={"product": ["A"]},  # B is filtered out
+            values={"revenue": "sum"},
+            subtotals="region", totals=False,
+        )
+        # Row leaves: E/A, E Subtotal
+        # E/A: 10+30 = 40
+        # E Subtotal: 40 (NOT 60 — must not include product B's 20)
+        assert table.body[0, 0] == 40.0
+        assert table.body[1, 0] == 40.0
+
+    def test_grand_cell_respects_both_filters(self):
+        """Most aggressive collapse: grand_cell with no keys at all.
+        Must respect both row and col level filters simultaneously."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region":  ["E", "E", "W", "W"],
+            "quarter": ["Q1", "Q2", "Q1", "Q2"],
+            "revenue": [10.0, 20.0, 30.0, 40.0],
+        })
+        table = lg.tabulate(
+            df, rows="region", cols="quarter",
+            levels={"region": ["E"], "quarter": ["Q1"]},
+            values={"revenue": "sum"}, totals=True,
+        )
+        # Only E/Q1 displayed = revenue 10
+        # All four positions (E/Q1, E/Total, Total/Q1, Total/Total)
+        # should equal 10 — the pre-filter excludes W rows and Q2 rows.
+        assert table.body[0, 0] == 10.0  # E/Q1
+        assert table.body[0, 1] == 10.0  # E/Total
+        assert table.body[1, 0] == 10.0  # Total/Q1
+        assert table.body[1, 1] == 10.0  # Total/Total — grand_cell
+
+
 # === Compound: subtotals + cols + totals end-to-end =======================
 
 

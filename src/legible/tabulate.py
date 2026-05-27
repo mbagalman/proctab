@@ -546,6 +546,40 @@ def _product(xs: list[int]) -> int:
     return p
 
 
+def _filter_to_displayed_domain(
+    nw_df: nw.DataFrame,
+    keys: list[str],
+    cats_per_dim: list[tuple[Category, ...]],
+) -> nw.DataFrame:
+    """Filter `nw_df` to rows whose values across each listed key are in
+    that dim's displayed category domain.
+
+    Used by `aggregate_totals` so total sections (which collapse one or
+    both axes) still honor each dim's `levels=` filter. If a dim's
+    displayed categories include the synthetic Missing category
+    (`Category(value=None, label="Missing")`), source rows with null
+    values for that key are kept; otherwise they're filtered out.
+    """
+    for key, cats in zip(keys, cats_per_dim):
+        values = [c.value for c in cats]
+        has_null = any(v is None for v in values)
+        non_nulls = [v for v in values if v is not None]
+
+        if non_nulls and has_null:
+            expr = nw.col(key).is_in(non_nulls) | nw.col(key).is_null()
+        elif non_nulls:
+            expr = nw.col(key).is_in(non_nulls)
+        elif has_null:
+            expr = nw.col(key).is_null()
+        else:
+            # No displayed categories at all → no rows match.
+            return nw_df.head(0)
+
+        nw_df = nw_df.filter(expr)
+
+    return nw_df
+
+
 def _group_flat_index(
     row: dict,
     keys: tuple[str, ...],
@@ -618,6 +652,14 @@ def aggregate_totals(
     to avoid re-resolving the categorical domains. Honors `spec.dropna`
     in the same way `aggregate_data_cells()` did.
 
+    Pre-filters `nw_df` to the displayed category domain across ALL row
+    and col dims before any section is computed. Total sections collapse
+    one or both axes (no key in the groupby) and would otherwise pull
+    in source rows whose values were excluded by `levels=`. Subtotal
+    sections that DO include the dim in their groupby already filter
+    via per-cell index lookup; the pre-filter is redundant there but
+    harmless and uniform.
+
     Sections are computed per the TABULATE_API conditions:
     - `subtotals_data_cols[dim]` for each `dim in spec.subtotals` (and
       `n_rows > 0`)
@@ -627,6 +669,15 @@ def aggregate_totals(
     """
     if spec.dropna:
         nw_df = nw_df.drop_nulls(subset=list(spec.rows + spec.cols))
+
+    # P1 fix: filter source to the displayed category domain so total
+    # sections that collapse a dim still respect that dim's levels=.
+    nw_df = _filter_to_displayed_domain(
+        nw_df,
+        keys=list(spec.rows) + list(spec.cols),
+        cats_per_dim=list(data_result.row_categories)
+                     + list(data_result.col_categories),
+    )
 
     row_dim_sizes = [len(c) for c in data_result.row_categories]
     col_dim_sizes = [len(c) for c in data_result.col_categories]
