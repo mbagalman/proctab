@@ -176,6 +176,29 @@ class TestRowTree:
             assert isinstance(leaf.path[1], SubtotalMarker)
             assert leaf.path[1].at_dim == "product"
 
+    def test_missing_category_subtotal_label_uses_label_not_value(self):
+        """Reviewer P3 regression: synthetic Missing categories have
+        value=None, label="Missing". The subtotal row label must use
+        the label, not the value, or it renders as 'None Subtotal'."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region": ["West", None, "East"],
+            "product": ["A", "B", "A"],
+            "revenue": [100.0, 50.0, 90.0],
+        })
+        spec = _spec(rows=["region", "product"],
+                     values={"revenue": "sum"},
+                     subtotals="region", totals=False)
+        axes, _ = _axes(wrap(df), spec)
+        subtotal_labels = [
+            leaf.label for leaf in axes.row_axis.leaves()
+            if leaf.role == "subtotal"
+        ]
+        # Categories alphabetical: East, West, then Missing (None) → 3 subtotals
+        assert "Missing Subtotal" in subtotal_labels
+        # Negative: no "None Subtotal" should appear
+        assert not any("None" in label for label in subtotal_labels)
+
 
 class TestColTree:
     def test_no_cols_no_user_dim(self, sample_df):

@@ -1124,10 +1124,14 @@ def _build_row_axis(
                 children=inner_leaves,
             ))
             if is_outer_subtotal:
+                # Use the category's display label when present (e.g., the
+                # synthetic Missing category has value=None, label="Missing";
+                # rendering as "None Subtotal" would be wrong).
+                outer_display = outer_cat.label or outer_cat.value
                 top_children.append(Node(
                     path=(outer_cat, SubtotalMarker(at_dim=inner_dim_name)),
                     depth=2, span=1, role="subtotal",
-                    label=f"{outer_cat.value} Subtotal",
+                    label=f"{outer_display} Subtotal",
                 ))
 
     if has_total_row:
