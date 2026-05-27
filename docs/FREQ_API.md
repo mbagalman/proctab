@@ -133,6 +133,7 @@ These two cases plus their `totals=False`, `observed=False`, and `dropna=True` v
 ## Edge-Case Behavior (v0.1)
 
 - **Three-or-more keys** → `ValueError("freq() supports one- or two-way tables only in v0.1; use tabulate() for higher-dimensional aggregations.")`
+- **Reserved synthetic-dim key names** — `_metric` and `_stat` are reserved (they're the internal col-axis dim names that `freq()` and `tabulate()` add to every output Table). A user key with one of these names raises `ValueError` at parse time with a rename suggestion. `_stat` is the active collision in v0.1; `_metric` is reserved for parity with [TABULATE_API.md](TABULATE_API.md) so the same vocabulary applies across the library.
 - **Empty DataFrame** → empty `Table` (zero leaves, empty body), not an error.
 - **Single-row DataFrame** → works normally.
 - **Grouping column doesn't exist** → `KeyError` with the column name.

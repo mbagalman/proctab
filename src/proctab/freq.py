@@ -38,6 +38,27 @@ from proctab.model import (
 )
 
 
+_RESERVED_KEY_NAMES = frozenset({"_metric", "_stat"})
+"""Synthetic col-axis dim names produced by `freq()` (always `_stat`,
+in both one- and two-way tables). Mirrors tabulate's `_RESERVED_DIM_NAMES`
+— a user key with one of these names would collide with the synthetic
+col dim and break DataFrame export. Rejected up front."""
+
+
+def _reject_reserved_keys(keys: tuple[str, ...]) -> None:
+    """Raise if any user key is a reserved synthetic-dim name."""
+    offenders = sorted({k for k in keys if k in _RESERVED_KEY_NAMES})
+    if offenders:
+        raise ValueError(
+            f"freq() keys contain reserved synthetic-dim name(s): "
+            f"{offenders}. '_metric' and '_stat' are reserved for the "
+            f"internal col-axis dim names that freq() and tabulate() "
+            f"add to every output Table. Rename the source column(s) "
+            f"(e.g., df = df.rename(columns={{'_stat': 'stat_id'}})) "
+            f"before calling freq()."
+        )
+
+
 @dataclass(frozen=True)
 class FreqSpec:
     """Parsed and validated `freq()` arguments. Internal — not part of the public API.
@@ -96,6 +117,8 @@ def _parse_freq_args(
         raise ValueError(
             f"freq() keys must be unique; got {list(normalized)}."
         )
+
+    _reject_reserved_keys(normalized)
 
     if levels is not None:
         extra = set(levels) - set(normalized)

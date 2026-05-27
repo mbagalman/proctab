@@ -216,3 +216,64 @@ class TestParseReservedKwargs:
         """Reserved kwargs should raise even if keys are also invalid."""
         with pytest.raises(NotImplementedError):
             _parse_freq_args("a", "b", "c", weight="w")
+
+
+class TestReservedSyntheticDimNames:
+    """freq() rejects user keys named `_metric` or `_stat`.
+
+    `_stat` is always added as the innermost col-axis dim (in both
+    one- and two-way tables); `_metric` is reserved for parity with
+    tabulate() so the same vocabulary applies across the library.
+    A user key with one of these names would collide with the
+    synthetic col dim and break DataFrame export.
+    """
+
+    def test_single_stat_key_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_freq_args("_stat")
+
+    def test_single_metric_key_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_freq_args("_metric")
+
+    def test_stat_as_first_of_two_keys_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_freq_args("_stat", "product")
+
+    def test_stat_as_second_of_two_keys_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_freq_args("region", "_stat")
+
+    def test_stat_in_list_form_raises(self):
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            _parse_freq_args(["region", "_stat"])
+
+    def test_error_lists_offending_name(self):
+        with pytest.raises(ValueError, match=r"\['_stat'\]"):
+            _parse_freq_args("_stat")
+
+    def test_error_suggests_rename(self):
+        with pytest.raises(ValueError, match=r"rename|df\.rename"):
+            _parse_freq_args("_stat")
+
+    def test_repro_reviewer_p2(self):
+        """End-to-end regression for the reviewer's P2 repro:
+
+            df = pd.DataFrame({"_stat": ["A", "B", "A"]})
+            pt.freq(df, "_stat").to_pandas()
+
+        Previously crashed at export time with "All arrays must be of
+        the same length"; now raises ValueError at parse time."""
+        pd = pytest.importorskip("pandas")
+        import proctab as pt
+
+        df = pd.DataFrame({"_stat": ["A", "B", "A"]})
+        with pytest.raises(ValueError, match="reserved synthetic-dim"):
+            pt.freq(df, "_stat")
+
+    def test_legitimate_names_still_pass(self):
+        # Control: similar-but-not-reserved names work fine.
+        spec = _parse_freq_args("stat")  # no leading underscore
+        assert spec.keys == ("stat",)
+        spec2 = _parse_freq_args("region_stat", "metric_count")
+        assert spec2.keys == ("region_stat", "metric_count")
