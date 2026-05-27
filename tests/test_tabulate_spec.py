@@ -314,6 +314,22 @@ class TestParseLevelsLabel:
                 levels={"region": "W"},
             )
 
+    def test_duplicate_level_values_raise(self):
+        # Reviewer P2 regression: duplicate level values produced
+        # duplicate leaves and silently misrouted data to the last index.
+        with pytest.raises(ValueError, match="duplicate"):
+            _parse_tabulate_args(
+                rows="region", values={"r": "sum"},
+                levels={"region": ["E", "E"]},
+            )
+
+    def test_duplicate_level_values_error_mentions_misrouting(self):
+        with pytest.raises(ValueError, match="silently misrouting"):
+            _parse_tabulate_args(
+                rows="region", values={"r": "sum"},
+                levels={"region": ["E", "W", "E"]},
+            )
+
     def test_label_subset_ok(self):
         _parse_tabulate_args(
             rows="region", cols="quarter",

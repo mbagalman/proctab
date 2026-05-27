@@ -166,6 +166,13 @@ def _parse_tabulate_args(
                     f"tabulate() levels[{k!r}] must be a list or tuple; "
                     f"got {type(v).__name__}."
                 )
+            if len(set(v)) != len(v):
+                raise ValueError(
+                    f"tabulate() levels[{k!r}] contains duplicate values; "
+                    f"got {list(v)}. Each level value must appear at "
+                    f"most once (otherwise leaves with identical paths "
+                    f"would share an index, silently misrouting data)."
+                )
 
     if label is not None:
         extra = set(label) - grouping_keys

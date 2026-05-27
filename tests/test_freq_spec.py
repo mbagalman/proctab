@@ -167,6 +167,20 @@ class TestParseLevelsValidation:
         spec = _parse_freq_args("region", levels={})
         assert spec.levels == {}
 
+    def test_duplicate_level_values_raise(self):
+        # Reviewer P2 regression: duplicate level values silently
+        # misrouted data because the {value: index} map collapsed them.
+        with pytest.raises(ValueError, match="duplicate"):
+            _parse_freq_args(
+                "region", levels={"region": ["E", "E"]},
+            )
+
+    def test_duplicate_level_values_error_mentions_misrouting(self):
+        with pytest.raises(ValueError, match="silently misrouting"):
+            _parse_freq_args(
+                "region", levels={"region": ["E", "W", "E"]},
+            )
+
 
 class TestParseLabelValidation:
     def test_label_subset_of_keys_ok(self):

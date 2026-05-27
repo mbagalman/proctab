@@ -111,6 +111,13 @@ def _parse_freq_args(
                     f"freq() levels[{k!r}] must be a list or tuple; got "
                     f"{type(v).__name__}."
                 )
+            if len(set(v)) != len(v):
+                raise ValueError(
+                    f"freq() levels[{k!r}] contains duplicate values; "
+                    f"got {list(v)}. Each level value must appear at "
+                    f"most once (otherwise leaves with identical paths "
+                    f"would share an index, silently misrouting data)."
+                )
 
     if label is not None:
         extra = set(label) - set(normalized)
