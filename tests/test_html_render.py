@@ -1,4 +1,4 @@
-"""Tests for the HTML renderer (H1 + H2 + H3 + H4 + H5).
+"""Tests for the HTML renderer (H1 + H2 + H3 + H4 + H5 + H6).
 
 Contract source: docs/HTML_RENDERER.md.
 
@@ -89,6 +89,19 @@ def _row_class(row_el: ET.Element) -> str:
 def _td_cells(row_el: ET.Element) -> list[ET.Element]:
     """Return only <td> elements (skips the row-label <th>)."""
     return list(row_el.findall("td"))
+
+
+def _extract_table_from_standalone(doc: str) -> str:
+    """Slice out `<table>…</table>` from a full standalone HTML5 doc.
+
+    `xml.etree.fromstring` can't parse the surrounding doc (HTML5 DOCTYPE,
+    void `<meta>` element), but the embedded `<table>` is well-formed XML.
+    Tests use this to operate on the inner fragment with the same
+    parsing helpers as fragment-mode tests.
+    """
+    start = doc.index("<table")
+    end = doc.rindex("</table>") + len("</table>")
+    return doc[start:end]
 
 
 # ---------------------------------------------------------------------------
@@ -1082,7 +1095,8 @@ class TestStandaloneClassOnly:
     """Standalone mode emits classes only — no inline `style="..."`."""
 
     def setup_method(self):
-        self.root = _parse(render_html(example_5_customized(), standalone=True))
+        doc = render_html(example_5_customized(), standalone=True)
+        self.root = _parse(_extract_table_from_standalone(doc))
 
     def test_no_element_has_style_attribute(self):
         for el in _all_elements(self.root):
@@ -1147,3 +1161,148 @@ class TestBuildCss:
         assert decl in css
         inline = _inline_styles_for([cls])
         assert decl in inline
+
+
+# ---------------------------------------------------------------------------
+# H6 — Standalone document wrapper.
+# ---------------------------------------------------------------------------
+
+
+import re  # for doc-level structure assertions (the full doc isn't XML-clean)
+
+
+class TestStandaloneDocStructure:
+    """Structural assertions on the full HTML5 doc wrapper."""
+
+    def setup_method(self):
+        self.doc = render_html(example_5_customized(), standalone=True)
+
+    def test_starts_with_html5_doctype(self):
+        assert self.doc.startswith("<!DOCTYPE html>")
+
+    def test_has_html_root(self):
+        assert "<html>" in self.doc
+        assert self.doc.rstrip().endswith("</html>")
+
+    def test_has_head_block(self):
+        assert "<head>" in self.doc
+        assert "</head>" in self.doc
+
+    def test_has_meta_charset_utf8(self):
+        assert '<meta charset="utf-8">' in self.doc
+
+    def test_has_title_element_in_head(self):
+        # Title appears before </head>.
+        head_end = self.doc.index("</head>")
+        head = self.doc[: head_end]
+        m = re.search(r"<title>(.*?)</title>", head)
+        assert m is not None
+
+    def test_has_style_block_in_head(self):
+        head_end = self.doc.index("</head>")
+        head = self.doc[: head_end]
+        assert "<style>" in head
+        assert "</style>" in head
+
+    def test_has_body_block_containing_table(self):
+        body_start = self.doc.index("<body>")
+        body_end = self.doc.index("</body>")
+        body = self.doc[body_start:body_end]
+        assert "<table" in body
+        assert 'class="proctab"' in body
+
+    def test_head_precedes_body(self):
+        assert self.doc.index("</head>") < self.doc.index("<body>")
+
+    def test_table_is_parseable_xml(self):
+        # Extract the inner <table> and confirm it parses cleanly.
+        _parse(_extract_table_from_standalone(self.doc))
+
+
+class TestStandaloneTitle:
+    """Title falls back to "proctab table" when meta lacks one."""
+
+    def test_uses_meta_title_when_present(self):
+        doc = render_html(example_5_customized(), standalone=True)
+        m = re.search(r"<title>(.*?)</title>", doc)
+        assert m.group(1) == "Net Revenue by Region"
+
+    def test_falls_back_to_default_when_meta_has_no_title(self):
+        table = _table_with_meta({})
+        doc = render_html(table, standalone=True)
+        m = re.search(r"<title>(.*?)</title>", doc)
+        assert m.group(1) == "proctab table"
+
+    def test_falls_back_when_meta_title_is_empty_string(self):
+        table = _table_with_meta({"title": ""})
+        doc = render_html(table, standalone=True)
+        m = re.search(r"<title>(.*?)</title>", doc)
+        assert m.group(1) == "proctab table"
+
+    def test_title_escapes_html_sensitive_characters(self):
+        table = _table_with_meta({"title": "Q1 & Q2 <2026>"})
+        doc = render_html(table, standalone=True)
+        # parse-back-style: the raw doc has escapes; the underlying text matches.
+        assert "<title>Q1 &amp; Q2 &lt;2026&gt;</title>" in doc
+
+
+class TestStandaloneStyleBlock:
+    """The embedded <style> block carries the same CSS as _build_css()."""
+
+    def setup_method(self):
+        self.doc = render_html(example_5_customized(), standalone=True)
+
+    def test_style_block_contains_build_css_output(self):
+        css = _build_css()
+        assert css in self.doc
+
+    def test_style_block_carries_proctab_total_rule(self):
+        # Spot-check: an important role rule is reachable in the doc.
+        style_start = self.doc.index("<style>")
+        style_end = self.doc.index("</style>")
+        style_block = self.doc[style_start:style_end]
+        assert ".proctab-total { font-weight: bold;" in style_block
+
+    def test_table_in_body_has_no_inline_styles(self):
+        # The whole point of the standalone wrapper: class-only markup,
+        # CSS supplied by the <style> block.
+        inner = _extract_table_from_standalone(self.doc)
+        root = _parse(inner)
+        for el in _all_elements(root):
+            assert el.get("style") is None, (
+                f"<{el.tag} class={el.get('class')!r}> unexpectedly has style"
+            )
+
+
+class TestRenderHtmlModeSeparation:
+    """`standalone=False` returns a fragment; `standalone=True` returns a doc."""
+
+    def test_fragment_mode_does_not_start_with_doctype(self):
+        out = render_html(example_5_customized(), standalone=False)
+        assert not out.startswith("<!DOCTYPE")
+        assert "<html" not in out
+        assert "<body" not in out
+
+    def test_standalone_mode_starts_with_doctype(self):
+        out = render_html(example_5_customized(), standalone=True)
+        assert out.startswith("<!DOCTYPE html>")
+
+    def test_fragment_mode_has_inline_styles(self):
+        out = render_html(example_5_customized(), standalone=False)
+        root = _parse(out)
+        assert root.get("style") is not None
+
+    def test_standalone_mode_inner_table_has_no_inline_styles(self):
+        out = render_html(example_5_customized(), standalone=True)
+        root = _parse(_extract_table_from_standalone(out))
+        assert root.get("style") is None
+
+    def test_both_modes_keep_class_hierarchy(self):
+        # Classes are structural; both modes carry them.
+        fragment = _parse(render_html(example_5_customized()))
+        standalone = _parse(
+            _extract_table_from_standalone(
+                render_html(example_5_customized(), standalone=True)
+            )
+        )
+        assert fragment.get("class") == standalone.get("class") == "proctab"

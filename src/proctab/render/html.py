@@ -4,8 +4,8 @@ v0.1: single default theme, two output modes (fragment / standalone).
 See docs/HTML_RENDERER.md for the locked design memo.
 
 Current state: H1 (format resolver) + H2 (column headers) + H3 (body)
-+ H4 (caption + tfoot) + H5 (default theme). H6-H7 will add the
-standalone document wrapper and the `Table._repr_html_` / `Table.to_html`
++ H4 (caption + tfoot) + H5 (default theme) + H6 (standalone document
+wrapper). H7 will add the `Table._repr_html_` / `Table.to_html`
 method wiring.
 """
 
@@ -539,24 +539,20 @@ def _render_tfoot(
 
 
 # ---------------------------------------------------------------------------
-# Top-level entry point.
+# H6 — Standalone document wrapper.
 # ---------------------------------------------------------------------------
 
 
-def render_html(table: Table, *, standalone: bool = False) -> str:
-    """Render a Table to an HTML string.
+_DEFAULT_DOC_TITLE = "proctab table"
 
-    Fragment mode (`standalone=False`, default) emits `<table>` with
-    inline `style="..."` attributes mirroring the standalone-mode CSS,
-    so the table renders correctly when embedded in pages or notebooks
-    without depending on an external stylesheet.
 
-    Standalone mode emits the same `<table>` with class-only markup
-    (no inline styles); the H6 wrapper supplies the CSS via an
-    embedded `<style>` block.
+def _render_fragment(table: Table, *, style_for: StyleResolver) -> str:
+    """Render the `<table>…</table>` portion of either output mode.
+
+    Caller supplies the StyleResolver (inline for fragment, no-op for
+    standalone) so the H6 wrapper can build a class-only table while
+    fragment mode keeps inline styles.
     """
-    style_for: StyleResolver = _no_styles if standalone else _inline_styles_for
-
     n_total_cols = 1 + len(table.col_axis.leaves())
     caption = _render_caption(table.meta, style_for=style_for)
     thead = _render_thead(table.col_axis, style_for=style_for)
@@ -573,3 +569,64 @@ def render_html(table: Table, *, standalone: bool = False) -> str:
         parts.append(tfoot)
     parts.append("</table>")
     return "\n".join(parts)
+
+
+def _render_standalone(table: Table) -> str:
+    """Wrap a class-only fragment in a full HTML5 document.
+
+    Layout per docs/HTML_RENDERER.md Standalone-mode schematic:
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>{table.meta["title"] or "proctab table"}</title>
+        <style>…embedded default theme via _build_css()…</style>
+      </head>
+      <body>
+        <table class="proctab">…</table>
+      </body>
+      </html>
+    """
+    fragment = _render_fragment(table, style_for=_no_styles)
+    raw_title = (table.meta.get("title") if table.meta else None) or _DEFAULT_DOC_TITLE
+    title = _html.escape(str(raw_title))
+    css = _build_css()
+    return (
+        "<!DOCTYPE html>\n"
+        "<html>\n"
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        f"<title>{title}</title>\n"
+        "<style>\n"
+        f"{css}\n"
+        "</style>\n"
+        "</head>\n"
+        "<body>\n"
+        f"{fragment}\n"
+        "</body>\n"
+        "</html>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry point.
+# ---------------------------------------------------------------------------
+
+
+def render_html(table: Table, *, standalone: bool = False) -> str:
+    """Render a Table to an HTML string.
+
+    Fragment mode (`standalone=False`, default) emits `<table>` with
+    inline `style="..."` attributes mirroring the standalone-mode CSS,
+    so the table renders correctly when embedded in pages or notebooks
+    without depending on an external stylesheet.
+
+    Standalone mode emits a full HTML5 document: `<!DOCTYPE html>` +
+    `<head>` with `<meta charset>`, `<title>` (from `table.meta["title"]`
+    or the default `"proctab table"`), and an embedded `<style>` block
+    of the same declarations fragment mode emits inline + `<body>`
+    containing the class-only `<table>`.
+    """
+    if standalone:
+        return _render_standalone(table)
+    return _render_fragment(table, style_for=_inline_styles_for)
