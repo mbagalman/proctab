@@ -1133,3 +1133,289 @@ class TestTfootIntegrationExample5:
         # Source carries the top border; footnote does not.
         assert ws.cell(row=be + 2, column=1).border.top.style == "thin"
         assert ws.cell(row=be + 3, column=1).border.top.style is None
+
+
+# ---------------------------------------------------------------------------
+# E5 — default theme: Font / Border / Alignment per role + modifiers.
+#
+# openpyxl returns None for borders that were never explicitly set on a
+# cell (vs. a Side(style=None) that was). _border_style normalizes both
+# to None so test assertions stay readable.
+# ---------------------------------------------------------------------------
+
+
+def _border_style(side) -> str | None:
+    return side.style if side is not None else None
+
+
+class TestColHeaderStyling:
+    """Column header cells: bold + centered + thin bottom border."""
+
+    @pytest.mark.parametrize(
+        "fixture",
+        [
+            example_1_one_way_freq,
+            example_1b_two_way_freq,
+            example_2_tabulate_v01,
+            example_5_customized,
+        ],
+    )
+    def test_all_header_cells_bold_centered_bottom_thin(
+        self, fixture, tmp_path: pathlib.Path
+    ):
+        table = fixture()
+        ws = _render_and_load(table, tmp_path)
+        _, H, hs = _layout_for(table)
+        n_col_leaves = len(table.col_axis.leaves())
+        for r in range(hs, hs + H):
+            for c in range(2, 2 + n_col_leaves):
+                cell = ws.cell(row=r, column=c)
+                if cell.value is None:
+                    continue  # merged-in cell with no top-left value
+                assert cell.font.bold is True, f"{cell.coordinate} not bold"
+                assert cell.alignment.horizontal == "center", (
+                    f"{cell.coordinate} not centered"
+                )
+                assert _border_style(cell.border.bottom) == "thin", (
+                    f"{cell.coordinate} missing thin bottom border"
+                )
+
+
+class TestTotalColLeftEdge:
+    """Cells in the LEFT EDGE column of a Total col group get medium left
+    border; other cells in the same group do not."""
+
+    def test_outer_total_header_gets_left_border(
+        self, tmp_path: pathlib.Path
+    ):
+        # example_1b_two_way_freq: 3 product_line groups × 4 stats = 12 leaves.
+        # Total group starts at col J (column index 10). Outer header row.
+        table = example_1b_two_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        _, _, hs = _layout_for(table)
+        cell = ws.cell(row=hs, column=10)
+        assert cell.value == "Total"
+        assert _border_style(cell.border.left) == "medium"
+
+    def test_inner_header_leftmost_within_total_gets_left_border(
+        self, tmp_path: pathlib.Path
+    ):
+        table = example_1b_two_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        _, _, hs = _layout_for(table)
+        # Inner header row (hs + 1). Leftmost stat within Total: col J.
+        leftmost = ws.cell(row=hs + 1, column=10)
+        assert _border_style(leftmost.border.left) == "medium"
+
+    def test_inner_headers_not_leftmost_within_total_have_no_left_border(
+        self, tmp_path: pathlib.Path
+    ):
+        table = example_1b_two_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        _, _, hs = _layout_for(table)
+        # Inner row, K/L/M (cols 11/12/13) inside Total group — no border.
+        for c in (11, 12, 13):
+            inner = ws.cell(row=hs + 1, column=c)
+            assert _border_style(inner.border.left) is None, (
+                f"col {c} should NOT have a left border"
+            )
+
+    def test_body_leftmost_total_col_cells_get_left_border(
+        self, tmp_path: pathlib.Path
+    ):
+        # Every body row's col J (leftmost of Total group) gets medium left.
+        table = example_1b_two_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        for r in range(bs, bs + len(table.row_axis.leaves())):
+            cell = ws.cell(row=r, column=10)
+            assert _border_style(cell.border.left) == "medium", (
+                f"row {r} col J should have left border"
+            )
+
+    def test_body_non_leftmost_total_col_cells_have_no_left_border(
+        self, tmp_path: pathlib.Path
+    ):
+        table = example_1b_two_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        for r in range(bs, bs + len(table.row_axis.leaves())):
+            for c in (11, 12, 13):
+                cell = ws.cell(row=r, column=c)
+                assert _border_style(cell.border.left) is None, (
+                    f"row {r} col {c} should NOT have left border"
+                )
+
+
+class TestTotalRowStyling:
+    """Total ROW cells: bold + medium top border. Subtotal row: italic."""
+
+    def test_total_row_cells_bold_with_medium_top_border(
+        self, tmp_path: pathlib.Path
+    ):
+        # example_1_one_way_freq: last leaf is Total row.
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        total_row = bs + 4  # 4 data leaves before total
+        for c in range(2, 6):
+            cell = ws.cell(row=total_row, column=c)
+            assert cell.font.bold is True, f"col {c} not bold in total row"
+            assert _border_style(cell.border.top) == "medium", (
+                f"col {c} missing medium top border in total row"
+            )
+
+    def test_data_row_cells_not_bold_no_thick_top_border(
+        self, tmp_path: pathlib.Path
+    ):
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # First data row (West) at body_start.
+        for c in range(2, 6):
+            cell = ws.cell(row=bs, column=c)
+            assert cell.font.bold is False
+            # No medium top border (might have a None or another style,
+            # but explicitly not "medium").
+            assert _border_style(cell.border.top) != "medium"
+
+    def test_subtotal_row_cells_italic(self, tmp_path: pathlib.Path):
+        # example_2_tabulate_v01: row labels include "E Subtotal", "W Subtotal".
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # "E Subtotal" is at index 3 in the leaf-and-group sequence:
+        # E (group), A, B, E Subtotal → rows bs..bs+3.
+        sub_row = bs + 3
+        assert ws.cell(row=sub_row, column=1).value == "E Subtotal"
+        for c in range(1, 11):
+            cell = ws.cell(row=sub_row, column=c)
+            if cell.value is None:
+                continue
+            assert cell.font.italic is True, f"col {c} not italic in subtotal row"
+
+    def test_grand_total_cell_gets_bold_top_and_left_borders(
+        self, tmp_path: pathlib.Path
+    ):
+        # example_2_tabulate_v01 grand total row × Total col (col H=8).
+        # The grand-total intersection cell stacks ALL three modifiers:
+        # in_total_row (bold + top) + in_total_col (left).
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        grand_total_row = bs + 8  # 2 groups + 4 leaves + 2 subtotals + 1 GT
+        assert ws.cell(row=grand_total_row, column=1).value == "Grand Total"
+        # Leftmost of Total quarter group is col H (column index 8).
+        gt_cell = ws.cell(row=grand_total_row, column=8)
+        assert gt_cell.font.bold is True
+        assert _border_style(gt_cell.border.top) == "medium"
+        assert _border_style(gt_cell.border.left) == "medium"
+
+
+class TestRowLabelStyling:
+    """Row labels (column A): left-aligned + indent per depth. Total
+    rows bold, subtotal rows italic."""
+
+    def test_row_label_left_aligned(self, tmp_path: pathlib.Path):
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        for r in range(bs, bs + 5):
+            assert ws.cell(row=r, column=1).alignment.horizontal == "left"
+
+    def test_row_label_indent_for_depth_2(self, tmp_path: pathlib.Path):
+        # example_2_tabulate_v01 row tree: depth 1 (region E/W groups),
+        # depth 2 (product A/B leaves + subtotals + grand total). Leaves
+        # at depth 2 should get indent=1.
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # E (depth 1) → indent 0
+        assert ws.cell(row=bs, column=1).alignment.indent == 0
+        # E's A leaf (depth 2) → indent 1
+        assert ws.cell(row=bs + 1, column=1).alignment.indent == 1
+        # E Subtotal (depth 2) → indent 1
+        assert ws.cell(row=bs + 3, column=1).alignment.indent == 1
+
+    def test_total_row_label_bold(self, tmp_path: pathlib.Path):
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        total_label = ws.cell(row=bs + 4, column=1)
+        assert total_label.value == "Total"
+        assert total_label.font.bold is True
+
+    def test_subtotal_row_label_italic(self, tmp_path: pathlib.Path):
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        sub_label = ws.cell(row=bs + 3, column=1)
+        assert sub_label.value == "E Subtotal"
+        assert sub_label.font.italic is True
+
+    def test_data_row_label_neither_bold_nor_italic(
+        self, tmp_path: pathlib.Path
+    ):
+        table = example_1_one_way_freq()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # West row label
+        cell = ws.cell(row=bs, column=1)
+        assert cell.font.bold is False
+        assert cell.font.italic is False
+
+
+class TestStyleRegistry:
+    """Sanity checks on the source-of-truth dict + composer."""
+
+    def test_registry_has_expected_keys(self):
+        from proctab.render.excel import _STYLE_REGISTRY
+        expected = {
+            "col_header", "row_label", "body_cell",
+            "in_subtotal_row", "in_total_row", "in_total_col",
+        }
+        assert set(_STYLE_REGISTRY.keys()) == expected
+
+    def test_compose_stacks_subtotal_and_total_col_modifiers(
+        self, tmp_path: pathlib.Path
+    ):
+        # A cell that's BOTH in a subtotal row AND in the total col gets
+        # italic (subtotal) AND left medium border (total-col).
+        table = example_2_tabulate_v01()
+        ws = _render_and_load(table, tmp_path)
+        bs = _body_start(table)
+        # E Subtotal row × Total col leftmost (col H=8).
+        sub_row = bs + 3
+        cell = ws.cell(row=sub_row, column=8)
+        assert cell.font.italic is True
+        assert _border_style(cell.border.left) == "medium"
+        # Not bold (subtotal, not total).
+        assert cell.font.bold is False
+
+
+class TestTotalColLeftEdgesHelper:
+    """Unit test for the helper that computes total-col left-edge columns."""
+
+    def test_no_total_in_col_axis_returns_empty(self):
+        from proctab.render.excel import _total_col_left_edges
+        # example_1_one_way_freq: col axis has only _stat dim with 4 data
+        # leaves; no total at col level.
+        assert _total_col_left_edges(
+            example_1_one_way_freq().col_axis
+        ) == set()
+
+    def test_one_total_group_marks_first_leaf_col(self):
+        from proctab.render.excel import _total_col_left_edges
+        # example_1b_two_way_freq: 3 product groups × 4 stats; Total at
+        # position J = col 10.
+        assert _total_col_left_edges(
+            example_1b_two_way_freq().col_axis
+        ) == {10}
+
+    def test_empty_col_axis_returns_empty(self):
+        from proctab.model import Axis, Dimension, Node
+        from proctab.render.excel import _total_col_left_edges
+        empty_dim = Dimension(name="c", kind="category", categories=())
+        empty_tree = Node(path=(), depth=0, span=0, role="data", children=())
+        empty_axis = Axis(dims=(empty_dim,), tree=empty_tree)
+        assert _total_col_left_edges(empty_axis) == set()

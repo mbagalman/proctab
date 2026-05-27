@@ -7,8 +7,10 @@ Current state: E1 (format resolver + sheet-name validator) + E2 (column
 headers, with merged cells for interior nodes) + E3 (body cells with
 MissingReason dispatch and number-format application) + E4 (title at
 row 1; source/footnote rows after the body, merged across body cols
-with wrap). E5-E7 add default styling for body cells, frozen pane /
-widths, and the Table method wiring. openpyxl is an optional extra — install via
+with wrap) + E5 (default theme — Font/Border/Alignment per role/missing
+modifier composed from a single source-of-truth registry, analogous to
+the HTML renderer's `_STYLE_BY_CLASS`). E6-E7 add frozen pane / column
+widths and the Table method wiring. openpyxl is an optional extra — install via
 `pip install proctab[excel]`. The function-level entry point and the
 Table method both lazy-import openpyxl, so `import proctab` works in
 environments without it.
@@ -20,6 +22,7 @@ import os
 from dataclasses import dataclass
 
 from proctab.model import (
+    Axis,
     Category,
     MissingReason,
     Node,
@@ -175,6 +178,102 @@ def _walk_nonroot(node: Node):
             yield from _walk_nonroot(child)
 
 
+# ---------------------------------------------------------------------------
+# E5 — Default theme.
+#
+# Single source-of-truth dict mapping a "role key" to a styling fragment,
+# analogous to the HTML renderer's `_STYLE_BY_CLASS`. A cell's final
+# styling is the composition of one base key (`col_header` / `row_label`
+# / `body_cell`) plus zero or more role/position modifiers
+# (`in_subtotal_row` / `in_total_row` / `in_total_col`).
+#
+# Composition rule (per attribute type, later wins):
+#   - font kwargs merge: `Font(**merged_kwargs)`
+#   - alignment kwargs merge: `Alignment(**merged_kwargs)`
+#   - border sides merge per-side: `Border(top=..., left=..., ...)`
+# ---------------------------------------------------------------------------
+
+
+_STYLE_REGISTRY: dict[str, dict[str, dict]] = {
+    # Base cell types
+    "col_header": {
+        "font":         {"bold": True},
+        "alignment":    {"horizontal": "center", "vertical": "center"},
+        "border_sides": {"bottom": "thin"},
+    },
+    "row_label": {
+        "alignment":    {"horizontal": "left", "vertical": "center"},
+    },
+    "body_cell": {
+        "alignment":    {"horizontal": "right", "vertical": "center"},
+    },
+    # Row-role modifiers (stack on top of the base type)
+    "in_subtotal_row": {
+        "font":         {"italic": True},
+    },
+    "in_total_row": {
+        "font":         {"bold": True},
+        "border_sides": {"top": "medium"},
+    },
+    # Col-position modifier (left edge of a Total col group)
+    "in_total_col": {
+        "border_sides": {"left": "medium"},
+    },
+}
+
+
+def _apply_style(cell, role_keys, *, indent: int | None = None) -> None:
+    """Compose `Font`/`Alignment`/`Border` from `_STYLE_REGISTRY` entries
+    and apply to `cell`. Optional `indent` overrides the alignment indent
+    (used by row labels at varying depths).
+    """
+    font_kwargs: dict = {}
+    align_kwargs: dict = {}
+    border_sides: dict = {}
+
+    for key in role_keys:
+        fragment = _STYLE_REGISTRY.get(key, {})
+        font_kwargs.update(fragment.get("font", {}))
+        align_kwargs.update(fragment.get("alignment", {}))
+        border_sides.update(fragment.get("border_sides", {}))
+
+    if indent is not None:
+        align_kwargs["indent"] = indent
+
+    from openpyxl.styles import Alignment, Border, Font, Side
+
+    if font_kwargs:
+        cell.font = Font(**font_kwargs)
+    if align_kwargs:
+        cell.alignment = Alignment(**align_kwargs)
+    if border_sides:
+        cell.border = Border(**{
+            side: Side(style=style_name)
+            for side, style_name in border_sides.items()
+        })
+
+
+def _total_col_left_edges(col_axis: Axis) -> set[int]:
+    """1-based column positions that mark the LEFT EDGE of a Total
+    column group.
+
+    Per the memo: "to the left of the Total column" is a single visual
+    divider per total group, not one between every adjacent stat sub-
+    column inside the group. So we mark only the leftmost leaf-column
+    of each depth-1 role='total' node.
+    """
+    if len(col_axis.dims) == 0:
+        return set()
+
+    edges: set[int] = set()
+    pos = 2  # column B (first body col); column A is the row-label column
+    for node in _nodes_at_depth(col_axis.tree, 1):
+        if node.role == "total":
+            edges.add(pos)
+        pos += node.span
+    return edges
+
+
 def _node_label(node: Node) -> str:
     if node.label is not None:
         return node.label
@@ -209,16 +308,24 @@ def _write_thead(ws, col_axis, layout: _Layout) -> None:
         # body section is also empty.
         return
 
+    left_edges = _total_col_left_edges(col_axis)
+
     for d in range(1, H + 1):
         row = layout.header_start + d - 1
         col = 2  # column A is the blank corner; first content in column B
         for node in _nodes_at_depth(col_axis.tree, d):
-            ws.cell(row=row, column=col, value=_node_label(node))
+            cell = ws.cell(row=row, column=col, value=_node_label(node))
             if node.span > 1:
                 ws.merge_cells(
                     start_row=row, start_column=col,
                     end_row=row, end_column=col + node.span - 1,
                 )
+
+            role_keys = ["col_header"]
+            if col in left_edges:
+                role_keys.append("in_total_col")
+            _apply_style(cell, role_keys)
+
             col += node.span
 
 
@@ -266,12 +373,29 @@ def _write_tbody(ws, table: Table, layout: _Layout) -> int:
     present_code = int(MissingReason.PRESENT)
     empty_code = int(MissingReason.EMPTY)
 
+    col_leaves = table.col_axis.leaves()
+    left_edges = _total_col_left_edges(table.col_axis)
+
     row = layout.body_start
     leaf_idx = 0
     body_end = layout.body_start - 1  # if no body rows emitted
 
     for node in _walk_nonroot(table.row_axis.tree):
-        ws.cell(row=row, column=1, value=_node_label(node))
+        # Row-role modifiers used by both the row label and (for leaves)
+        # every body cell on this row. Interior (group-header) nodes
+        # carry role="data" so no modifier kicks in.
+        row_role_keys: list[str] = []
+        if node.role == "subtotal":
+            row_role_keys.append("in_subtotal_row")
+        elif node.role == "total":
+            row_role_keys.append("in_total_row")
+
+        label_cell = ws.cell(row=row, column=1, value=_node_label(node))
+        _apply_style(
+            label_cell,
+            ["row_label"] + row_role_keys,
+            indent=max(node.depth - 1, 0),
+        )
 
         if node.children is None:
             for j in range(layout.n_col_leaves):
@@ -288,6 +412,11 @@ def _write_tbody(ws, table: Table, layout: _Layout) -> int:
                     pass  # leave value=None — cell stays blank
                 else:
                     cell.value = _MISSING_TEXT[missing_code]
+
+                cell_role_keys = ["body_cell"] + row_role_keys
+                if col in left_edges:
+                    cell_role_keys.append("in_total_col")
+                _apply_style(cell, cell_role_keys)
 
             leaf_idx += 1
         # Interior (group) row: column A label only; B..N left blank.
