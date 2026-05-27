@@ -561,6 +561,111 @@ class TestTbodyTabulate:
             assert "proctab-total" in cls
 
 
+class TestTotalRowColModifiers:
+    """`proctab-in-total-row` and `-col` give a top border to total rows
+    and a left divider to total cols, so cells in a regular data row that
+    happen to fall under a total column don't pick up a spurious heavy
+    top border on every row."""
+
+    # example_1b_two_way_freq has both a Total column AND a Total row:
+    # the inner stat-leaf cells under the Total product_line group are
+    # marked role=total at the col level; the bottom row is role=total
+    # at the row level.
+
+    def setup_method(self):
+        self.table = example_1b_two_way_freq()
+        self.root = _parse(render_html(self.table))
+        self.rows = _tbody_rows(self.root)
+
+    def _col_total_indices(self) -> list[int]:
+        leaves = self.table.col_axis.leaves()
+        return [j for j, leaf in enumerate(leaves) if leaf.role == "total"]
+
+    def test_data_row_cells_in_total_col_carry_in_total_col(self):
+        data_rows = [r for r in self.rows if (r.get("class") or "") == "proctab-data"]
+        assert data_rows
+        for r in data_rows:
+            tds = _td_cells(r)
+            for j in self._col_total_indices():
+                cls = tds[j].get("class") or ""
+                assert "proctab-in-total-col" in cls
+
+    def test_data_row_cells_in_total_col_do_NOT_carry_in_total_row(self):
+        # This is the P2 regression: previously these cells were getting
+        # border-top: 2px because proctab-total carried both row and col
+        # emphasis. They must be marked col-only now.
+        data_rows = [r for r in self.rows if (r.get("class") or "") == "proctab-data"]
+        for r in data_rows:
+            tds = _td_cells(r)
+            for j in self._col_total_indices():
+                cls = tds[j].get("class") or ""
+                assert "proctab-in-total-row" not in cls
+
+    def test_data_row_cells_in_data_col_carry_neither_modifier(self):
+        data_rows = [r for r in self.rows if (r.get("class") or "") == "proctab-data"]
+        col_total_idx = set(self._col_total_indices())
+        for r in data_rows:
+            tds = _td_cells(r)
+            for j, td in enumerate(tds):
+                if j in col_total_idx:
+                    continue
+                cls = td.get("class") or ""
+                assert "proctab-in-total-row" not in cls
+                assert "proctab-in-total-col" not in cls
+
+    def test_total_row_data_col_cells_carry_only_in_total_row(self):
+        total_rows = [r for r in self.rows if (r.get("class") or "") == "proctab-total"]
+        assert total_rows
+        col_total_idx = set(self._col_total_indices())
+        for r in total_rows:
+            tds = _td_cells(r)
+            for j, td in enumerate(tds):
+                if j in col_total_idx:
+                    continue
+                cls = td.get("class") or ""
+                assert "proctab-in-total-row" in cls
+                assert "proctab-in-total-col" not in cls
+
+    def test_grand_total_cell_carries_both_modifiers(self):
+        # Intersection of total row and total col → both borders.
+        total_rows = [r for r in self.rows if (r.get("class") or "") == "proctab-total"]
+        for r in total_rows:
+            tds = _td_cells(r)
+            for j in self._col_total_indices():
+                cls = tds[j].get("class") or ""
+                assert "proctab-in-total-row" in cls
+                assert "proctab-in-total-col" in cls
+
+
+class TestTotalRowColStyling:
+    """Inline-style output for the new modifier classes (fragment mode)."""
+
+    def setup_method(self):
+        self.root = _parse(render_html(example_1b_two_way_freq()))
+        self.rows = _tbody_rows(self.root)
+        leaves = example_1b_two_way_freq().col_axis.leaves()
+        self.col_total_idx = [j for j, leaf in enumerate(leaves) if leaf.role == "total"]
+
+    def test_data_row_cells_in_total_col_get_left_border_not_thick_top(self):
+        # The P2 regression check, expressed in CSS terms.
+        data_rows = [r for r in self.rows if (r.get("class") or "") == "proctab-data"]
+        for r in data_rows:
+            tds = _td_cells(r)
+            for j in self.col_total_idx:
+                style = tds[j].get("style") or ""
+                assert "border-left: 2px solid #333" in style
+                # No heavy 2px top border — only the 1px row separator
+                # from proctab-cell.
+                assert "border-top: 2px" not in style
+
+    def test_total_row_cells_get_heavy_top_border(self):
+        total_rows = [r for r in self.rows if (r.get("class") or "") == "proctab-total"]
+        for r in total_rows:
+            for td in _td_cells(r):
+                style = td.get("style") or ""
+                assert "border-top: 2px solid #333" in style
+
+
 # ---------------------------------------------------------------------------
 # Synthetic-fixture helpers for the trickier H3 cases (missing reasons,
 # escaping, non-finite, empty Table).
@@ -1085,10 +1190,31 @@ class TestFragmentInlineStyles:
             style = td.get("style") or ""
             assert "font-weight: bold" in style
 
-    def test_tfoot_rows_have_inline_style(self):
+    def test_tfoot_td_has_inline_style(self):
+        # Style must live on the <td> — CSS padding/border on <tr>
+        # is unreliable, so the rendered cell needs the rule directly.
         tfoot = self.root.find("tfoot")
         for tr in tfoot.findall("tr"):
-            assert tr.get("style") is not None
+            td = tr.find("td")
+            assert td.get("style") is not None
+            assert "padding" in td.get("style")
+
+    def test_tfoot_tr_has_no_inline_style(self):
+        # The class stays on <tr> for selector targeting, but inline
+        # style is moved to <td> where it actually renders.
+        tfoot = self.root.find("tfoot")
+        for tr in tfoot.findall("tr"):
+            assert tr.get("style") is None
+
+    def test_tfoot_td_carries_class_for_selector_targeting(self):
+        # Both <tr> and <td> carry the role class so consumer CSS can
+        # target whichever selector is more convenient.
+        tfoot = self.root.find("tfoot")
+        for tr in tfoot.findall("tr"):
+            tr_cls = tr.get("class") or ""
+            td_cls = tr.find("td").get("class") or ""
+            assert tr_cls == td_cls
+            assert tr_cls in ("proctab-source", "proctab-footnote")
 
 
 class TestStandaloneClassOnly:

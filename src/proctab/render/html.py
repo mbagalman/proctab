@@ -147,10 +147,21 @@ _STYLE_BY_CLASS: dict[str, str] = {
     # Group-header rows (interior row-tree nodes)
     "proctab-group-header": "font-weight: 600;",
     "proctab-group-pad": "",
-    # Per-role styling (applied to both <tr> and the cells inside)
+    # Per-role styling (applied to <tr> and any cell with the same role
+    # class via cell-role precedence). Bold/italic cascade from <tr> to
+    # children; the row-level/column-level borders are added separately
+    # by the proctab-in-* modifier classes below so that, e.g., a
+    # total-column cell in a regular data row gets a left divider
+    # without a spurious heavy top border on every row.
     "proctab-data": "",
     "proctab-subtotal": "font-style: italic;",
-    "proctab-total": "font-weight: bold; border-top: 2px solid #333;",
+    "proctab-total": "font-weight: bold;",
+    # Row/column total modifier classes. Emitted on the <td> when the
+    # cell's row leaf is a total row (top border) or the cell's col leaf
+    # is a total col (left divider). A grand-total cell (intersection of
+    # both) gets both borders.
+    "proctab-in-total-row": "border-top: 2px solid #333;",
+    "proctab-in-total-col": "border-left: 2px solid #333;",
     # Missing-cell variants — muted color so non-PRESENT cells fade back
     "proctab-missing-empty": "",
     "proctab-missing-null": "color: #999;",
@@ -376,11 +387,17 @@ def _render_td(
     missing_code: int,
     fmt: str | None,
     value_kind: ValueKind,
-    cell_role: str,
+    row_role: str,
+    col_role: str,
     *,
     style_for: StyleResolver,
 ) -> str:
+    cell_role = _cell_role(row_role, col_role)
     classes = ["proctab-cell", f"proctab-{cell_role}"]
+    if row_role == "total":
+        classes.append("proctab-in-total-row")
+    if col_role == "total":
+        classes.append("proctab-in-total-col")
 
     if missing_code == int(MissingReason.PRESENT):
         text = _html.escape(_resolve_format(value, fmt, value_kind))
@@ -418,14 +435,14 @@ def _render_leaf_row(
         _row_label_th(row_leaf, scope="row", style_for=style_for)
     ]
     for j, col_leaf in enumerate(col_leaves):
-        cell_role = _cell_role(row_leaf.role, col_leaf.role)
         cells.append(
             _render_td(
                 table.body[row_idx, j],
                 int(table.missing[row_idx, j]),
                 table.formats[j],
                 table.value_kinds[j],
-                cell_role,
+                row_leaf.role,
+                col_leaf.role,
                 style_for=style_for,
             )
         )
@@ -517,21 +534,29 @@ def _render_tfoot(
     if not source and not footnotes:
         return ""
 
+    # Class is on both <tr> (so consumer CSS can target the row) and
+    # <td> (so the styling — padding, border-top — actually applies).
+    # CSS padding on <tr> is ineffective in most browsers; the visible
+    # cell needs to carry the rule directly. Inline style goes only on
+    # the <td> for the same reason; tr-level inline styling would be
+    # rendered-effect dead weight.
     rows: list[str] = []
     if source:
         text = _html.escape(f"Source: {source}")
-        style = style_for(["proctab-source"])
+        td_style = style_for(["proctab-source"])
         rows.append(
-            f'    <tr class="proctab-source"{style}>\n'
-            f'      <td colspan="{n_total_cols}">{text}</td>\n'
+            f'    <tr class="proctab-source">\n'
+            f'      <td colspan="{n_total_cols}" '
+            f'class="proctab-source"{td_style}>{text}</td>\n'
             f"    </tr>"
         )
     for fn in footnotes:
         text = _html.escape(str(fn))
-        style = style_for(["proctab-footnote"])
+        td_style = style_for(["proctab-footnote"])
         rows.append(
-            f'    <tr class="proctab-footnote"{style}>\n'
-            f'      <td colspan="{n_total_cols}">{text}</td>\n'
+            f'    <tr class="proctab-footnote">\n'
+            f'      <td colspan="{n_total_cols}" '
+            f'class="proctab-footnote"{td_style}>{text}</td>\n'
             f"    </tr>"
         )
     inner = "\n".join(rows)
