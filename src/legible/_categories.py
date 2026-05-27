@@ -19,15 +19,34 @@ import narwhals.stable.v1 as nw
 from legible.model import Category
 
 
+# Lazy pandas reference for pd.NA / pd.NaT singleton checks. Pandas is a
+# dev dep, not a runtime dep, but if a caller is using a pandas-flavored
+# DataFrame they have pandas installed by definition.
+try:
+    import pandas as _pd
+except ImportError:
+    _pd = None
+
+
 def is_null(value: Any) -> bool:
     """Cross-engine null check.
 
-    pandas exposes object-column nulls as NaN; polars exposes them as
-    `None`. Both must be treated as the same conceptual null.
+    Recognizes every null form a narwhals-wrapped iter_rows can surface:
+
+    - Python ``None`` (polars exposes nulls this way at the boundary)
+    - float NaN (pandas exposes object-column nulls this way; also numpy.nan)
+    - pandas ``pd.NA`` singleton (nullable dtypes: Int64, Float64, string,
+      BooleanDtype, etc.)
+    - pandas ``pd.NaT`` singleton (datetime / timedelta nulls)
+
+    Identity checks against the pandas singletons avoid the
+    array-broadcasting hazard of ``pd.isna()`` on non-scalar inputs.
     """
     if value is None:
         return True
     if isinstance(value, float) and math.isnan(value):
+        return True
+    if _pd is not None and (value is _pd.NA or value is _pd.NaT):
         return True
     return False
 

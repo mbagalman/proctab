@@ -114,6 +114,38 @@ class TestNullHandling:
         assert result.row_categories[-1].value is None
         assert result.row_categories[-1].label == "Missing"
 
+    def test_pandas_nullable_string_pd_na_normalized_to_none(self):
+        """Pandas nullable dtypes use pd.NA, not float NaN. Reviewer P1
+        regression: pd.NA was not being recognized as null, so it became
+        a phantom <NA> category in observed mode."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region": pd.Series(["West", "West", pd.NA, "East"], dtype="string"),
+        })
+        result = aggregate_counts(wrap(df), _spec("region"))
+        values = [c.value for c in result.row_categories]
+        assert values == ["East", "West", None]
+        assert result.row_categories[-1].label == "Missing"
+        np.testing.assert_array_equal(result.counts, [1, 2, 1])
+
+    def test_pandas_nullable_with_levels_and_pd_na(self):
+        """Reviewer P1 regression: with observed=False + levels= that
+        omitted None, pd.NA rows were silently dropped because the dict
+        lookup didn't recognize them. With dropna=False (default), they
+        must land in the Missing bucket."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region": pd.Series(["West", pd.NA, "West"], dtype="string"),
+        })
+        result = aggregate_counts(
+            wrap(df),
+            _spec("region", observed=False, levels={"region": ["West"]}),
+        )
+        values = [c.value for c in result.row_categories]
+        assert values == ["West", None]
+        # West=2, Missing=1 (the pd.NA row)
+        np.testing.assert_array_equal(result.counts, [2, 1])
+
 
 class TestLevelsNullInteraction:
     """`levels=` must still honor the dropna=False Missing-category policy.

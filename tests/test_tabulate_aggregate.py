@@ -374,3 +374,71 @@ class TestEdgeCases:
         assert cats[-1].label == "Missing"
         # The Missing row has the null-grouped record: revenue=50
         assert result.stat_values[-1, 0, 0] == 50.0
+
+
+class TestPandasNullableNA:
+    """Reviewer P1 regression: pd.NA in pandas nullable dtypes was not
+    being normalized. The reviewer's exact reproducer is the second test
+    here — expected Missing revenue 2.0, actual 0.0 before the fix.
+    """
+
+    def test_observed_mode_pd_na_becomes_missing(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region": pd.Series(["West", pd.NA, "West"], dtype="string"),
+            "revenue": pd.Series([1.0, 2.0, 1.0], dtype="Float64"),
+        })
+        result = aggregate_data_cells(
+            wrap(df),
+            _spec(rows="region", values={"revenue": "sum"}),
+        )
+        values = [c.value for c in result.row_categories[0]]
+        # Sorted alphabetical: West, then Missing (None) at the end
+        assert values == ["West", None]
+        assert result.row_categories[0][-1].label == "Missing"
+        # West revenue = 1+1 = 2.0; Missing revenue = 2.0 (the pd.NA row)
+        np.testing.assert_array_almost_equal(
+            result.stat_values[:, 0, 0], [2.0, 2.0],
+        )
+
+    def test_observed_false_with_levels_routes_pd_na_to_missing(self):
+        """Reviewer's exact reproducer. Before the fix, the pd.NA row
+        contributed 0.0 to Missing (silently dropped); after, it
+        contributes its revenue (2.0)."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region": pd.Series(["West", pd.NA, "West"], dtype="string"),
+            "revenue": pd.Series([1.0, 2.0, 1.0], dtype="Float64"),
+        })
+        result = aggregate_data_cells(
+            wrap(df),
+            _spec(rows="region", observed=False,
+                  levels={"region": ["West"]},
+                  values={"revenue": "sum"}),
+        )
+        values = [c.value for c in result.row_categories[0]]
+        assert values == ["West", None]
+        # The critical assertion: Missing revenue must be 2.0, not 0.0
+        np.testing.assert_array_almost_equal(
+            result.stat_values[:, 0, 0], [2.0, 2.0],
+        )
+        # Row count and nonnull count should also reflect the pd.NA row
+        np.testing.assert_array_equal(result.row_count[:, 0], [2, 1])
+        np.testing.assert_array_equal(result.nonnull_count[:, 0, 0], [2, 1])
+
+    def test_nullable_int_pd_na_also_normalized(self):
+        """pd.NA appears in every pandas nullable dtype, not just strings.
+        Spot-check that Int64 nullable also routes pd.NA to Missing."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "year": pd.Series([2020, pd.NA, 2020, 2021], dtype="Int64"),
+            "revenue": pd.Series([10.0, 20.0, 10.0, 30.0], dtype="Float64"),
+        })
+        result = aggregate_data_cells(
+            wrap(df),
+            _spec(rows="year", values={"revenue": "sum"}),
+        )
+        values = [c.value for c in result.row_categories[0]]
+        # Sorted numeric, then Missing
+        assert values == [2020, 2021, None]
+        assert result.row_categories[0][-1].label == "Missing"
