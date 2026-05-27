@@ -255,6 +255,13 @@ def _write_tbody(ws, table: Table, layout: _Layout) -> int:
     (or `body_start - 1` if no rows were emitted), for E4 to anchor
     the source/footnote rows.
     """
+    # Empty Table edge case (per docs/EXCEL_RENDERER.md): zero leaves
+    # on either axis → no body rows. The col-axis branch matters: a
+    # 1×0 Table still has row nodes that would otherwise emit lone
+    # column-A labels, which the memo explicitly excludes.
+    if layout.n_col_leaves == 0:
+        return layout.body_start - 1
+
     present_code = int(MissingReason.PRESENT)
     empty_code = int(MissingReason.EMPTY)
 
@@ -314,6 +321,12 @@ def render_excel(
     Raises `ImportError` with an actionable message if openpyxl is
     not installed (install via `pip install proctab[excel]`).
     """
+    # Validate the sheet name BEFORE attempting the openpyxl import so
+    # that an invalid sheet= raises the documented ValueError
+    # deterministically — even in environments where openpyxl isn't
+    # installed (otherwise the ImportError would mask it).
+    _validate_sheet_name(sheet)
+
     try:
         from openpyxl import Workbook
         from openpyxl.utils import get_column_letter
@@ -322,8 +335,6 @@ def render_excel(
             "Excel export requires openpyxl. Install with "
             "`pip install proctab[excel]`."
         ) from exc
-
-    _validate_sheet_name(sheet)
 
     wb = Workbook()
     ws = wb.active

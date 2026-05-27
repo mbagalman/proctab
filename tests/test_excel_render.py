@@ -307,6 +307,32 @@ class TestMissingOpenpyxlError:
                 example_1_one_way_freq(), tmp_path / "should_not_create.xlsx"
             )
 
+    def test_invalid_sheet_raises_value_error_even_without_openpyxl(
+        self, tmp_path, monkeypatch,
+    ):
+        # P3 regression: an invalid sheet= must raise the documented
+        # ValueError deterministically, not the ImportError that would
+        # otherwise mask it when openpyxl is absent.
+        for name in list(sys.modules):
+            if name == "openpyxl" or name.startswith("openpyxl."):
+                monkeypatch.setitem(sys.modules, name, None)
+
+        original_import = builtins.__import__
+
+        def _no_openpyxl(name, *args, **kwargs):
+            if name == "openpyxl" or name.startswith("openpyxl."):
+                raise ImportError(f"simulated absent: {name}")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_openpyxl)
+
+        with pytest.raises(ValueError, match="reserved"):
+            render_excel(
+                example_1_one_way_freq(),
+                tmp_path / "should_not_create.xlsx",
+                sheet="bad/name",
+            )
+
 
 # ---------------------------------------------------------------------------
 # E2 — column header rendering. Reopen the rendered file and walk cells.
@@ -517,6 +543,21 @@ class TestTheadEmptyAxis:
         # empty sheet by openpyxl default.)
         assert ws.cell(row=1, column=1).value is None
         assert ws.cell(row=1, column=2).value is None
+
+    def test_no_body_row_labels_written(self, tmp_path: pathlib.Path):
+        # P2 regression: even though the row axis has a leaf ("W"),
+        # zero col leaves means the memo says no body rows at all.
+        # Previously the renderer wrote 'W' at A2; the fix is an
+        # early return in _write_tbody.
+        openpyxl = pytest.importorskip("openpyxl")
+        path = tmp_path / "empty.xlsx"
+        render_excel(self._empty_axis_table(), path)
+        ws = openpyxl.load_workbook(path).active
+        # Walk down the first few rows of column A; all should be blank.
+        for r in range(1, 6):
+            assert ws.cell(row=r, column=1).value is None, (
+                f"A{r} should be blank for an empty-col-axis table"
+            )
 
 
 class TestTheadCornerCellAlwaysBlank:
