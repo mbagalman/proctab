@@ -21,6 +21,7 @@ from proctab.model import (
     TotalMarker,
     ValueKind,
 )
+from proctab.render.excel import render_excel
 from proctab.render.html import render_html
 from proctab.render.text import render_text
 
@@ -39,6 +40,7 @@ __all__ = [
     "TotalMarker",
     "ValueKind",
     "freq",
+    "render_excel",
     "render_html",
     "render_text",
     "tabulate",
