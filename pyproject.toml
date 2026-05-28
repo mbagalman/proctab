@@ -67,3 +67,6 @@ packages = ["src/proctab"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"

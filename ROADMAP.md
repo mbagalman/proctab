@@ -11,7 +11,7 @@ The bare data model and a renderer that proves it works. No aggregation yet.
 - [x] Plain-text renderer (`src/proctab/render/text.py`)
 - [x] Initial test suite (733 passing — pandas/polars exercised from F3 onward)
 - [x] Hardened `Axis.validate()`: full-tree walk; span correctness; `len(path) == depth` consistency; malformed-branch-path detection
-- [ ] CI: GitHub Actions running lint + test on Python 3.10–3.14
+- [x] CI: GitHub Actions running lint + test on Python 3.10–3.14 (`.github/workflows/ci.yml`)
 - [x] Choose final project name — locked: `proctab`
 
 ## v0.1 — Minimum Lovable Release

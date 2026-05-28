@@ -15,8 +15,6 @@ import pytest
 from proctab._engine import wrap
 from proctab.model import MissingReason
 from proctab.tabulate import (
-    ColLeafEntry,
-    RowLeafEntry,
     TabulateAssembled,
     _parse_tabulate_args,
     aggregate_data_cells,

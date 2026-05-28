@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import pytest
 
-import narwhals.stable.v1 as nw
 
 from proctab._engine import wrap
 from proctab.tabulate import STAT_EXPRS, SUPPORTED_STATS

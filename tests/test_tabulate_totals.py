@@ -13,7 +13,6 @@ import pytest
 
 from proctab._engine import wrap
 from proctab.tabulate import (
-    SectionResult,
     TotalsResult,
     _parse_tabulate_args,
     aggregate_data_cells,

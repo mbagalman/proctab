@@ -1021,7 +1021,6 @@ class TestTfootSource:
     ):
         # example_5_customized has source + 4 col leaves → merge A..E
         ws = _render_and_load(example_5_customized(), tmp_path)
-        bs = _body_start(example_5_customized())
         be = _body_end(example_5_customized())
         ranges = {str(r) for r in ws.merged_cells.ranges}
         assert f"A{be + 2}:E{be + 2}" in ranges
@@ -1623,7 +1622,7 @@ class TestEmptyTableE6:
 
 class TestTableToExcel:
     def test_returns_none(self, tmp_path: pathlib.Path):
-        openpyxl = pytest.importorskip("openpyxl")
+        pytest.importorskip("openpyxl")
         out = example_5_customized().to_excel(tmp_path / "out.xlsx")
         assert out is None
 

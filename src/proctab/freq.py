@@ -20,8 +20,6 @@ import narwhals.stable.v1 as nw
 import numpy as np
 
 from proctab._categories import (
-    column_has_nulls as _column_has_nulls,
-    is_null as _is_null,
     normalize as _normalize,
     resolve_categories,
 )

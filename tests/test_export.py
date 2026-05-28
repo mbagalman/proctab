@@ -23,9 +23,7 @@ from proctab.model import (
     Dimension,
     MissingReason,
     Node,
-    SubtotalMarker,
     Table,
-    TotalMarker,
 )
 from proctab._export import _build_long_format_columns
 
@@ -357,7 +355,7 @@ class TestToPandas:
             assert v == v  # not NaN (would be NaN if missing was emitted as None)
 
     def test_subtotal_in_dim_column_is_null(self):
-        pd = pytest.importorskip("pandas")
+        pytest.importorskip("pandas")
         df = example_2_tabulate_v01().to_pandas()
         sub = df[df["_row_role"] == "subtotal"]
         # In the subtotal rows, product (inner row dim) is null.
@@ -375,8 +373,8 @@ class TestToPolars:
         assert isinstance(df, pl.DataFrame)
 
     def test_shape_matches_pandas_path(self):
-        pd = pytest.importorskip("pandas")
-        pl = pytest.importorskip("polars")
+        pytest.importorskip("pandas")
+        pytest.importorskip("polars")
         table = example_2_tabulate_v01()
         df_pd = table.to_pandas()
         df_pl = table.to_polars()
@@ -389,8 +387,8 @@ class TestToPolars:
         assert table.to_polars().columns == list(table.to_pandas().columns)
 
     def test_value_column_matches_pandas(self):
-        pd = pytest.importorskip("pandas")
-        pl = pytest.importorskip("polars")
+        pytest.importorskip("pandas")
+        pytest.importorskip("polars")
         table = example_1_one_way_freq()
         df_pd = table.to_pandas()
         df_pl = table.to_polars()

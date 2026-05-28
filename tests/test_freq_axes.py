@@ -8,21 +8,17 @@ back to F4b.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from proctab.freq import (
     AxisBuildResult,
     CountResult,
     FreqSpec,
-    PercentResult,
     build_axes,
     derive_percentages,
 )
 from proctab.model import (
     Axis,
     Category,
-    Dimension,
-    SubtotalMarker,
     TotalMarker,
 )
 

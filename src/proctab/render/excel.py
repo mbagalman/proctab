@@ -483,7 +483,6 @@ def _write_tbody(ws, table: Table, layout: _Layout) -> int:
     present_code = int(MissingReason.PRESENT)
     empty_code = int(MissingReason.EMPTY)
 
-    col_leaves = table.col_axis.leaves()
     left_edges = _total_col_left_edges(table.col_axis)
 
     row = layout.body_start

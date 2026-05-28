@@ -10,6 +10,8 @@ immediately at parse time or at the first assertion against the tree.
 
 from __future__ import annotations
 
+import pathlib
+import re
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -27,9 +29,7 @@ from proctab.model import (
     Dimension,
     MissingReason,
     Node,
-    SubtotalMarker,
     Table,
-    TotalMarker,
 )
 from proctab.render.html import (
     _build_css,
@@ -1294,9 +1294,6 @@ class TestBuildCss:
 # ---------------------------------------------------------------------------
 
 
-import re  # for doc-level structure assertions (the full doc isn't XML-clean)
-
-
 class TestStandaloneDocStructure:
     """Structural assertions on the full HTML5 doc wrapper."""
 
@@ -1437,9 +1434,6 @@ class TestRenderHtmlModeSeparation:
 # ---------------------------------------------------------------------------
 # H7 — Table._repr_html_ and Table.to_html method wiring.
 # ---------------------------------------------------------------------------
-
-
-import pathlib
 
 
 class TestReprHtml:

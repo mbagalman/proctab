@@ -7,7 +7,6 @@ example_2 fixture?) land in T7; broad edge-case coverage in T8.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 import proctab as pt

@@ -13,7 +13,6 @@ import pytest
 from proctab._engine import wrap
 from proctab.model import (
     Axis,
-    Dimension,
     SubtotalMarker,
     TotalMarker,
 )
