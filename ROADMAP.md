@@ -79,8 +79,8 @@ First release someone might actually try. Each feature gets a design memo before
 
 - [ ] PyPI name reservation (after final name is chosen)
 - [ ] User-facing `README.md`
-- [ ] License decision (MIT vs Apache 2.0)
-- [ ] Expand `pyproject.toml` metadata before first PyPI release: `readme = "README.md"`, `license`, `keywords`, `classifiers`, `urls` (Homepage, Repository, Issues). Some entries depend on the name + license decisions.
+- [x] License decision — MIT (see `LICENSE`)
+- [x] Expand `pyproject.toml` metadata before first PyPI release: `readme = "README.md"`, `license`, `keywords`, `classifiers`, `urls` (Homepage, Repository, Issues). Some entries depend on the name + license decisions.
 - [ ] Documentation site (mkdocs-material likely)
 - [x] DataFrame export: `Table.to_pandas()` / `Table.to_polars()` (long format per [TABLE_MODEL.md#dataframe-export](docs/TABLE_MODEL.md#dataframe-export))
 

@@ -81,5 +81,4 @@ crosstab library and want something usable *now*,
 
 ## License
 
-To be chosen before the first release (MIT or Apache 2.0). All
-commits to date are by the project author.
+MIT — see [LICENSE](LICENSE).

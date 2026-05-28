@@ -2,11 +2,50 @@
 name = "proctab"
 version = "0.0.1"
 description = "Executive-ready summary tables and crosstabs from business data."
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
+authors = [
+    {name = "Michael Bagalman"},
+]
+keywords = [
+    "tables",
+    "crosstab",
+    "frequency",
+    "summary",
+    "pivot",
+    "report",
+    "excel",
+    "analytics",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = [
     "numpy>=1.24",
     "narwhals>=1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mbagalman/proctab"
+Repository = "https://github.com/mbagalman/proctab"
+Issues = "https://github.com/mbagalman/proctab/issues"
 
 [project.optional-dependencies]
 excel = [
