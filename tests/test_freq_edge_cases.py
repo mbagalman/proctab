@@ -174,6 +174,19 @@ class TestLevelsBehaviorPublic:
             ["South", "West", "East"]
 
 
+class TestInternalAliasColumnNames:
+    def test_grouping_column_named_internal_count_alias_works(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"__n__": ["a", "b", "a"]})
+
+        table = pt.freq(df, "__n__")
+
+        data_leaves = [leaf for leaf in table.row_axis.leaves()
+                       if leaf.role == "data"]
+        assert [leaf.path[0].value for leaf in data_leaves] == ["a", "b"]
+        np.testing.assert_array_equal(table.body[:, 0], [2, 1, 3])
+
+
 # === Exotic column types ===================================================
 
 
@@ -348,3 +361,20 @@ class TestNullInLevels:
         # null bucket.
         n_leaves = len(table.row_axis.leaves())
         assert n_leaves == 4  # 3 categories + Total
+
+    def test_polars_nan_with_levels_appends_missing_and_counts_it(self):
+        pl = pytest.importorskip("polars")
+        df = pl.DataFrame({
+            "region": [1.0, float("nan")],
+        })
+
+        table = pt.freq(
+            df, "region", observed=False,
+            levels={"region": [1.0]},
+        )
+
+        data_leaves = [leaf for leaf in table.row_axis.leaves()
+                       if leaf.role == "data"]
+        assert [leaf.path[0].value for leaf in data_leaves] == [1.0, None]
+        assert data_leaves[-1].path[0].label == "Missing"
+        np.testing.assert_array_equal(table.body[:, 0], [1, 1, 2])

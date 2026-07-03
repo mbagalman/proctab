@@ -304,6 +304,45 @@ class TestLevelsSubsetFilter:
         assert table.body[0, 0] == 160.0
 
 
+class TestInternalAliasColumnNames:
+    @pytest.mark.parametrize(
+        "group_col",
+        ["__rowcount__", "__nnc__0__", "__sv__0__"],
+    )
+    def test_grouping_column_named_internal_alias_works(self, group_col):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            group_col: ["a", "b", "a"],
+            "revenue": [1.0, 2.0, 3.0],
+        })
+
+        table = pt.tabulate(
+            df, rows=group_col, values={"revenue": "sum"},
+        )
+
+        data_leaves = [leaf for leaf in table.row_axis.leaves()
+                       if leaf.role == "data"]
+        assert [leaf.path[0].value for leaf in data_leaves] == ["a", "b"]
+        np.testing.assert_array_equal(table.body[:, 0], [4, 2, 6])
+
+    @pytest.mark.parametrize(
+        "metric_col",
+        ["__rowcount__", "__nnc__0__", "__sv__0__"],
+    )
+    def test_metric_column_named_internal_alias_works(self, metric_col):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({
+            "region": ["a", "b", "a"],
+            metric_col: [1.0, 2.0, 3.0],
+        })
+
+        table = pt.tabulate(
+            df, rows="region", values={metric_col: "sum"},
+        )
+
+        np.testing.assert_array_equal(table.body[:, 0], [4, 2, 6])
+
+
 class TestLevelsRespectedInTotals:
     """Reviewer P1 regression: total sections collapse one or both axes
     (no key in the groupby). Without a pre-filter, source rows whose
@@ -401,6 +440,28 @@ class TestLevelsRespectedInTotals:
         assert table.body[0, 1] == 10.0  # E/Total
         assert table.body[1, 0] == 10.0  # Total/Q1
         assert table.body[1, 1] == 10.0  # Total/Total — grand_cell
+
+
+    def test_polars_nan_level_kept_in_grand_total(self):
+        """Polars treats NaN separately from null; proctab Missing
+        filters still need to keep it because NaN normalizes to None."""
+        pl = pytest.importorskip("polars")
+        df = pl.DataFrame({
+            "region": [float("nan")],
+            "revenue": [20.0],
+        })
+
+        table = pt.tabulate(
+            df, rows="region",
+            levels={"region": [np.nan]},
+            values={"revenue": "sum"}, totals=True,
+        )
+
+        data_leaves = [leaf for leaf in table.row_axis.leaves()
+                       if leaf.role == "data"]
+        assert [leaf.path[0].value for leaf in data_leaves] == [None]
+        np.testing.assert_array_equal(table.body[:, 0], [20, 20])
+        assert table.missing[1, 0] == MissingReason.PRESENT
 
 
 # === Compound: subtotals + cols + totals end-to-end =======================

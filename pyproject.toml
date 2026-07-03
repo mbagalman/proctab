@@ -67,6 +67,9 @@ packages = ["src/proctab"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:Mean of empty slice:RuntimeWarning",
+]
 
 [tool.ruff]
 target-version = "py310"

@@ -57,6 +57,17 @@ def _reject_reserved_keys(keys: tuple[str, ...]) -> None:
         )
 
 
+def _fresh_alias(existing: Sequence[str], base: str) -> str:
+    """Return an internal aggregation alias that cannot collide with data columns."""
+    used = set(existing)
+    alias = base
+    i = 1
+    while alias in used:
+        alias = f"{base}{i}"
+        i += 1
+    return alias
+
+
 @dataclass(frozen=True)
 class FreqSpec:
     """Parsed and validated `freq()` arguments. Internal — not part of the public API.
@@ -132,7 +143,8 @@ def _parse_freq_args(
                     f"freq() levels[{k!r}] must be a list or tuple; got "
                     f"{type(v).__name__}."
                 )
-            if len(set(v)) != len(v):
+            normalized_levels = [_normalize(level) for level in v]
+            if len(set(normalized_levels)) != len(normalized_levels):
                 raise ValueError(
                     f"freq() levels[{k!r}] contains duplicate values; "
                     f"got {list(v)}. Each level value must appear at "
@@ -281,12 +293,13 @@ def _build_counts_1d(
 ) -> np.ndarray:
     cat_to_idx = {cat.value: i for i, cat in enumerate(row_categories)}
     counts = np.zeros(len(row_categories), dtype=np.float64)
-    grouped = nw_df.group_by(keys).agg(nw.len().alias("__n__"))
+    count_alias = _fresh_alias(nw_df.columns, "__n__")
+    grouped = nw_df.group_by(keys).agg(nw.len().alias(count_alias))
     for row in grouped.iter_rows(named=True):
         value = _normalize(row[keys[0]])
         idx = cat_to_idx.get(value)
         if idx is not None:
-            counts[idx] = row["__n__"]
+            counts[idx] = row[count_alias]
     return counts
 
 
@@ -301,12 +314,13 @@ def _build_counts_2d(
     counts = np.zeros(
         (len(row_categories), len(col_categories)), dtype=np.float64
     )
-    grouped = nw_df.group_by(keys).agg(nw.len().alias("__n__"))
+    count_alias = _fresh_alias(nw_df.columns, "__n__")
+    grouped = nw_df.group_by(keys).agg(nw.len().alias(count_alias))
     for row in grouped.iter_rows(named=True):
         r = row_idx.get(_normalize(row[keys[0]]))
         c = col_idx.get(_normalize(row[keys[1]]))
         if r is not None and c is not None:
-            counts[r, c] = row["__n__"]
+            counts[r, c] = row[count_alias]
     return counts
 
 

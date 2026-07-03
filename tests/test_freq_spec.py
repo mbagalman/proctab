@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from proctab.freq import FreqSpec, _parse_freq_args
@@ -179,6 +180,19 @@ class TestParseLevelsValidation:
         with pytest.raises(ValueError, match="silently misrouting"):
             _parse_freq_args(
                 "region", levels={"region": ["E", "W", "E"]},
+            )
+
+    def test_null_like_duplicate_level_values_raise(self):
+        with pytest.raises(ValueError, match="duplicate"):
+            _parse_freq_args(
+                "region", levels={"region": [None, np.nan]},
+            )
+
+    def test_pd_na_duplicate_level_values_raise(self):
+        pd = pytest.importorskip("pandas")
+        with pytest.raises(ValueError, match="duplicate"):
+            _parse_freq_args(
+                "region", levels={"region": [pd.NA, np.nan]},
             )
 
 

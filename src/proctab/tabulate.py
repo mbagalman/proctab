@@ -20,7 +20,12 @@ from typing import Any
 import narwhals.stable.v1 as nw
 import numpy as np
 
-from proctab._categories import is_null, normalize, resolve_categories
+from proctab._categories import (
+    column_needs_nan_predicate,
+    is_null,
+    normalize,
+    resolve_categories,
+)
 from proctab._engine import wrap
 from proctab.model import (
     Axis,
@@ -103,6 +108,17 @@ def _reject_reserved_names(names, *, arg_name: str) -> None:
             f"df = df.rename(columns={{'_metric': 'metric_id'}})) "
             f"before calling tabulate()."
         )
+
+
+def _fresh_alias(used: set[str], base: str) -> str:
+    """Return a unique internal aggregation alias and reserve it in ``used``."""
+    alias = base
+    i = 1
+    while alias in used:
+        alias = f"{base}{i}"
+        i += 1
+    used.add(alias)
+    return alias
 
 
 @dataclass(frozen=True)
@@ -197,7 +213,8 @@ def _parse_tabulate_args(
                     f"tabulate() levels[{k!r}] must be a list or tuple; "
                     f"got {type(v).__name__}."
                 )
-            if len(set(v)) != len(v):
+            normalized_levels = [normalize(level) for level in v]
+            if len(set(normalized_levels)) != len(normalized_levels):
                 raise ValueError(
                     f"tabulate() levels[{k!r}] contains duplicate values; "
                     f"got {list(v)}. Each level value must appear at "
@@ -466,6 +483,19 @@ def aggregate_data_cells(nw_df: nw.DataFrame, spec: TabSpec) -> AggregateResult:
 
     row_dim_sizes = [len(c) for c in row_cats_per_dim]
     col_dim_sizes = [len(c) for c in col_cats_per_dim]
+
+    n_rows = _product(row_dim_sizes) if row_dim_sizes else 1
+    n_cols = _product(col_dim_sizes) if col_dim_sizes else 1
+    n_stats = len(spec.values_spec)
+
+    if n_rows * n_cols * n_stats > 10_000_000:
+        raise ValueError(
+            f"tabulate() estimated dense matrix size ({n_rows} rows x "
+            f"{n_cols} cols x {n_stats} stats) "
+            "exceeds 10 million cells. This would require excessive memory. "
+            "Reduce the cardinality of your grouping columns."
+        )
+
     metric_names = tuple(dict.fromkeys(m for m, _ in spec.values_spec))
 
     row_idx_maps = [{cat.value: i for i, cat in enumerate(cats)}
@@ -539,11 +569,20 @@ def _aggregate_section_arrays(
 
     metric_idx_map = {m: i for i, m in enumerate(metric_names)}
 
-    aggs: list[nw.Expr] = [nw.len().alias("__rowcount__")]
-    for metric in metric_names:
-        aggs.append(nw.col(metric).count().alias(f"__nnc__{metric}"))
+    used_aliases = set(nw_df.columns)
+    row_count_alias = _fresh_alias(used_aliases, "__rowcount__")
+    metric_aliases: dict[str, str] = {}
+    stat_aliases: list[str] = []
+
+    aggs: list[nw.Expr] = [nw.len().alias(row_count_alias)]
+    for metric_idx, metric in enumerate(metric_names):
+        alias = _fresh_alias(used_aliases, f"__nnc__{metric_idx}__")
+        metric_aliases[metric] = alias
+        aggs.append(nw.col(metric).count().alias(alias))
     for idx, (metric, stat) in enumerate(values_spec):
-        aggs.append(STAT_EXPRS[stat](metric).alias(f"__sv__{idx}"))
+        alias = _fresh_alias(used_aliases, f"__sv__{idx}__")
+        stat_aliases.append(alias)
+        aggs.append(STAT_EXPRS[stat](metric).alias(alias))
 
     if group_keys:
         grouped = nw_df.group_by(group_keys).agg(*aggs)
@@ -566,12 +605,12 @@ def _aggregate_section_arrays(
         else:
             c = 0
 
-        row_count[r, c] = row["__rowcount__"]
+        row_count[r, c] = row[row_count_alias]
         for metric in metric_names:
-            nonnull_count[r, c, metric_idx_map[metric]] = row[f"__nnc__{metric}"]
+            nonnull_count[r, c, metric_idx_map[metric]] = row[metric_aliases[metric]]
 
         for idx, (metric, stat) in enumerate(values_spec):
-            v = row[f"__sv__{idx}"]
+            v = row[stat_aliases[idx]]
             stat_values[r, c, idx] = 0.0 if is_null(v) else float(v)
 
     return stat_values, row_count, nonnull_count
@@ -603,12 +642,16 @@ def _filter_to_displayed_domain(
         has_null = any(v is None for v in values)
         non_nulls = [v for v in values if v is not None]
 
+        null_expr = nw.col(key).is_null()
+        if has_null and column_needs_nan_predicate(nw_df, key):
+            null_expr = null_expr | nw.col(key).is_nan()
+
         if non_nulls and has_null:
-            expr = nw.col(key).is_in(non_nulls) | nw.col(key).is_null()
+            expr = nw.col(key).is_in(non_nulls) | null_expr
         elif non_nulls:
             expr = nw.col(key).is_in(non_nulls)
         elif has_null:
-            expr = nw.col(key).is_null()
+            expr = null_expr
         else:
             # No displayed categories at all → no rows match.
             return nw_df.head(0)

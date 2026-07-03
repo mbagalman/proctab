@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from numbers import Real
 from typing import Any
 
 import narwhals.stable.v1 as nw
@@ -26,6 +27,15 @@ try:
     import pandas as _pd
 except ImportError:
     _pd = None
+
+
+def _is_nan_value(value: Any) -> bool:
+    """Return True for real-number NaN scalars, excluding bools."""
+    return (
+        isinstance(value, Real)
+        and not isinstance(value, bool)
+        and math.isnan(value)
+    )
 
 
 def is_null(value: Any) -> bool:
@@ -44,7 +54,7 @@ def is_null(value: Any) -> bool:
     """
     if value is None:
         return True
-    if isinstance(value, float) and math.isnan(value):
+    if _is_nan_value(value):
         return True
     if _pd is not None and (value is _pd.NA or value is _pd.NaT):
         return True
@@ -58,7 +68,31 @@ def normalize(value: Any) -> Any:
 
 def column_has_nulls(nw_df: nw.DataFrame, key: str) -> bool:
     """Engine-agnostic null check across the entire column."""
-    return bool(nw_df[key].is_null().any())
+    return any(is_null(v) for v in nw_df[key].to_list())
+
+
+def column_needs_nan_predicate(nw_df: nw.DataFrame, key: str) -> bool:
+    """Return True when filtering must explicitly match floating NaN.
+
+    Narwhals' ``is_null()`` follows backend semantics. In polars, NaN is
+    not null, so total-section filters that keep the Missing category need
+    an additional ``is_nan()`` predicate. We only enable that predicate for
+    numeric-like columns; Narwhals intentionally raises on string columns.
+    Pandas object/string columns with NaN are already covered by
+    ``is_null()``.
+    """
+    values = nw_df[key].to_list()
+    has_nan = any(_is_nan_value(v) for v in values)
+    if not has_nan:
+        return False
+    return all(
+        is_null(v)
+        or (
+            isinstance(v, Real)
+            and not isinstance(v, bool)
+        )
+        for v in values
+    )
 
 
 def resolve_categories(

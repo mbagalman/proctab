@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from proctab.tabulate import (
@@ -328,6 +329,21 @@ class TestParseLevelsLabel:
             _parse_tabulate_args(
                 rows="region", values={"r": "sum"},
                 levels={"region": ["E", "W", "E"]},
+            )
+
+    def test_null_like_duplicate_level_values_raise(self):
+        with pytest.raises(ValueError, match="duplicate"):
+            _parse_tabulate_args(
+                rows="region", values={"r": "sum"},
+                levels={"region": [None, np.nan]},
+            )
+
+    def test_pd_na_duplicate_level_values_raise(self):
+        pd = pytest.importorskip("pandas")
+        with pytest.raises(ValueError, match="duplicate"):
+            _parse_tabulate_args(
+                rows="region", values={"r": "sum"},
+                levels={"region": [pd.NA, np.nan]},
             )
 
     def test_label_subset_ok(self):

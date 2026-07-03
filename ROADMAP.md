@@ -72,8 +72,8 @@ First release someone might actually try. Each feature gets a design memo before
 
 ### Engine-agnostic input
 
-- [ ] narwhals integration in the aggregation pipeline
-- [ ] Test matrix: pandas + polars × all aggregation features
+- [x] narwhals integration in the aggregation pipeline
+- [x] Test matrix: pandas + polars × all aggregation features
 
 ### Project plumbing
 
